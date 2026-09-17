@@ -1,0 +1,17 @@
+# Runtime dependencies. Install with: pip install -r requirements.txt
+#
+# rich, requests, python-dotenv, and langchain-core are required for the
+# app to start at all (quote lookup + the agent's tool-calling machinery).
+# The three langchain-<provider> packages are each only imported lazily,
+# at the moment you actually use that provider (see stoxlib/providers.py)
+# -- but all three are listed here so `pip install -r requirements.txt`
+# works out of the box for STOX_LLM_PROVIDER=anthropic|deepseek|openai
+# without a second install step.
+
+rich==15.0.0
+requests==2.34.2
+python-dotenv==1.2.3
+langchain-core==1.6.3
+langchain-anthropic==1.7.2
+langchain-deepseek==1.1.0
+langchain-openai==1.6.2
