@@ -206,6 +206,65 @@ def test_run_stock_analysis_runs_all_four_agents_in_order():
     assert result.fundamentals == _fundamentals()
 
 
+def test_run_stock_analysis_runs_specialists_concurrently():
+    """trend/fundamentals/news hit independent data sources and don't
+    depend on each other's output, so they should overlap in wall time
+    instead of summing -- each sleeps briefly and records when it ran;
+    if they were sequential the total would be roughly 3x one sleep."""
+    import time
+
+    def _slow(result, sleep=0.05):
+        def _run(llm, ticker, on_tool_call=None):
+            time.sleep(sleep)
+            return result
+        return _run
+
+    with patch("stoxlib.analysis._run_trend_agent", side_effect=_slow(("trend", [], []))), \
+         patch("stoxlib.analysis._run_fundamentals_agent", side_effect=_slow(("fund", None))), \
+         patch("stoxlib.analysis._run_news_agent", side_effect=_slow(("news", []))), \
+         patch("stoxlib.analysis._run_aggregator", return_value="verdict"):
+        start = time.time()
+        result = analysis.run_stock_analysis("AAPL", llm=Mock())
+        elapsed = time.time() - start
+
+    assert result.error is None
+    assert elapsed < 0.12  # well under 3x the 0.05s sleep if run sequentially
+
+
+def test_run_stock_analysis_attributes_tool_calls_to_the_right_specialist():
+    """on_tool_call for run_stock_analysis carries a leading agent_name
+    (unlike agent.ask_agent's plain on_tool_call(name, args)) so a caller
+    can tell which of the three concurrent specialists made a given call."""
+    seen = []
+
+    def _fake_trend(llm, ticker, on_tool_call=None):
+        if on_tool_call:
+            on_tool_call("get_price_history", {"ticker": ticker})
+        return "trend", [_quote()], [_bar()]
+
+    def _fake_fundamentals(llm, ticker, on_tool_call=None):
+        if on_tool_call:
+            on_tool_call("get_company_fundamentals", {"ticker": ticker})
+        return "fund", _fundamentals()
+
+    def _fake_news(llm, ticker, on_tool_call=None):
+        if on_tool_call:
+            on_tool_call("get_stock_news", {"tickers": [ticker]})
+        return "news", [_article()]
+
+    with patch("stoxlib.analysis._run_trend_agent", side_effect=_fake_trend), \
+         patch("stoxlib.analysis._run_fundamentals_agent", side_effect=_fake_fundamentals), \
+         patch("stoxlib.analysis._run_news_agent", side_effect=_fake_news), \
+         patch("stoxlib.analysis._run_aggregator", return_value="verdict"):
+        analysis.run_stock_analysis("AAPL", llm=Mock(), on_tool_call=lambda *a: seen.append(a))
+
+    assert sorted(seen) == sorted([
+        ("trend", "get_price_history", {"ticker": "AAPL"}),
+        ("fundamentals", "get_company_fundamentals", {"ticker": "AAPL"}),
+        ("news", "get_stock_news", {"tickers": ["AAPL"]}),
+    ])
+
+
 def test_run_stock_analysis_builds_llm_when_none_given_and_reports_agent_error():
     result = analysis.run_stock_analysis("AAPL")
     assert result.error is not None
@@ -213,7 +272,14 @@ def test_run_stock_analysis_builds_llm_when_none_given_and_reports_agent_error()
 
 
 def test_run_stock_analysis_wraps_unexpected_exceptions():
-    with patch("stoxlib.analysis._run_trend_agent", side_effect=RuntimeError("boom")):
+    """The three specialists run concurrently in separate threads, so
+    fundamentals/news are patched too -- otherwise, with only trend mocked
+    to raise, they'd run for real against the Mock() llm in the background
+    (harmlessly discarded once trend's exception wins the race, but not
+    something a test should rely on)."""
+    with patch("stoxlib.analysis._run_trend_agent", side_effect=RuntimeError("boom")), \
+         patch("stoxlib.analysis._run_fundamentals_agent", return_value=("fund", _fundamentals())), \
+         patch("stoxlib.analysis._run_news_agent", return_value=("news", [_article()])):
         result = analysis.run_stock_analysis("AAPL", llm=Mock())
 
     assert result.error == "analysis error: boom"
