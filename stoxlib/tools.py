@@ -1,5 +1,5 @@
-"""Shared data-lookup tools: quotes, news, price history, fundamentals, and
-full-article text.
+"""Shared data-lookup tools: quotes, news, price history, fundamentals,
+world/geopolitical news, and full-article text.
 
 Used directly by agent.py's main chat agent and, with a narrower slice
 each, by analysis.py's trend/fundamentals/news specialists -- kept here,
@@ -12,6 +12,7 @@ from .history import HistoryError, fetch_history
 from .news import NewsError, fetch_news
 from .quotes import QuoteError, fetch_quotes
 from .webfetch import FetchError, fetch_article_text
+from .webz import WebzError, fetch_geo_news
 from langchain_core.tools import tool
 
 
@@ -166,7 +167,48 @@ def get_stock_news(tickers: list[str], limit: int = 5) -> str:
     return text
 
 
-UNKNOWN_ARTICLE_URL_ERROR = "error: url must be one get_stock_news returned in this conversation"
+def run_geo_news_tool(query, limit=5):
+    """Fetch world/geopolitical news and render it as tool-result text;
+    also return the GeoArticles."""
+    try:
+        articles = fetch_geo_news(query, limit=limit)
+    except WebzError as e:
+        return "error: %s" % e, []
+
+    if not articles:
+        return "no relevant world news found", []
+
+    blocks = [
+        "date: %s\ncountry: %s\nsentiment: %s\ntitle: %s\nurl: %s\nsummary: %s" % (
+            (a.date or "")[:10], a.country or "?", a.sentiment or "?", a.title, a.link, a.summary,
+        )
+        for a in articles
+    ]
+    return "\n---\n".join(blocks), articles
+
+
+@tool
+def get_geopolitical_news(query: str, limit: int = 5) -> str:
+    """Search world/general news (via webz.io) for geopolitical or macro
+    developments -- tariffs, sanctions, export controls, elections,
+    central-bank decisions, regional conflicts, commodity shocks -- that
+    aren't scoped to one ticker the way get_stock_news is.
+
+    `query` is free text describing the situation, not a ticker symbol
+    (e.g. "Taiwan semiconductor export controls", "Red Sea shipping
+    disruption", "Fed interest rate decision"). Use this to find outside
+    forces that could move a stock beyond its own company-specific news --
+    think about what countries, supply chains, or commodities a company is
+    exposed to, and search creatively for developments there.
+    """
+    text, _ = run_geo_news_tool(query, limit=limit)
+    return text
+
+
+UNKNOWN_ARTICLE_URL_ERROR = (
+    "error: url must be one get_stock_news or get_geopolitical_news "
+    "returned in this conversation"
+)
 
 
 def run_read_article_tool(url):
@@ -181,8 +223,8 @@ def run_read_article_tool(url):
 def read_article(url: str) -> str:
     """Read the full text of one news article, given its exact url.
 
-    Only call this with a url that get_stock_news already returned in this
-    conversation -- use it when that article's short summary doesn't cover
-    what the question needs.
+    Only call this with a url that get_stock_news or get_geopolitical_news
+    already returned in this conversation -- use it when that article's
+    short summary doesn't cover what the question needs.
     """
     return run_read_article_tool(url)

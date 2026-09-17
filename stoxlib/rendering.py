@@ -147,7 +147,7 @@ def show_fundamentals(console: Console, f):
 
 
 def show_analysis(console: Console, result):
-    """The three specialist write-ups plus the aggregator's risk
+    """The four specialist write-ups plus the aggregator's risk
     assessment, for an analysis.AnalysisResult.
 
     Each panel's text ultimately comes from the LLM, which may have
@@ -158,6 +158,7 @@ def show_analysis(console: Console, result):
         (result.trend_text, "trend", "dim"),
         (result.fundamentals_text, "fundamentals", "dim"),
         (result.news_text, "news", "dim"),
+        (result.geopolitics_text, "geopolitics", "dim"),
         (result.verdict_text, "risk assessment", "yellow"),
     ]
     for text, title, border_style in panels:
@@ -195,5 +196,41 @@ def show_news(console: Console, articles):
         date = (a.date or "")[:10]
         table.add_row("[dim]%s[/]" % date, "[%s]%s[/]" % (color, arrow), Text(a.title, style="bold"))
         table.add_row("", "", Text(a.link, style="dim"))
+    console.print(table)
+    console.print()
+
+
+def _geo_sentiment_arrow(sentiment):
+    """Like _sentiment_arrow, but for webz.io's plain positive/negative/
+    neutral string instead of EODHD's {"polarity": float} dict."""
+    s = (sentiment or "").strip().lower()
+    if s == "positive":
+        return "▲", "green"
+    if s == "negative":
+        return "▼", "red"
+    return "•", "white"
+
+
+def show_geo_news(console: Console, articles):
+    """Headline list for world/geopolitical news (webz.io): date, country,
+    sentiment arrow, title, and link -- the counterpart to show_news for
+    GeoArticle instead of Article.
+
+    Titles and links come from an external source, so they're wrapped in
+    Text() rather than interpolated into a markup string, same reasoning
+    as show_news.
+    """
+    if not articles:
+        console.print("[dim]no relevant world news[/]")
+        console.print()
+        return
+
+    table = Table(show_header=False, box=None, padding=(0, 1))
+    for a in articles:
+        arrow, color = _geo_sentiment_arrow(a.sentiment)
+        date = (a.date or "")[:10]
+        table.add_row("[dim]%s[/]" % date, "[dim]%s[/]" % (a.country or "?"),
+                      "[%s]%s[/]" % (color, arrow), Text(a.title, style="bold"))
+        table.add_row("", "", "", Text(a.link, style="dim"))
     console.print(table)
     console.print()

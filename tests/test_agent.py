@@ -8,6 +8,7 @@ from stoxlib.history import Bar, HistoryError
 from stoxlib.news import Article, NewsError
 from stoxlib.quotes import Quote, QuoteError
 from stoxlib.webfetch import FetchError
+from stoxlib.webz import GeoArticle, WebzError
 
 
 def _quote(code="AAPL.US"):
@@ -20,6 +21,12 @@ def _article(title="Apple hits new high"):
     return Article(title=title, date="2026-01-01T12:00:00+00:00",
                     link="https://example.com/a", symbols=["AAPL.US"],
                     sentiment={"polarity": 0.9}, summary="Some summary.")
+
+
+def _geo_article(title="Taiwan tightens chip export rules"):
+    return GeoArticle(title=title, date="2026-01-01T12:00:00+00:00",
+                       link="https://example.com/g", country="TW",
+                       sentiment="negative", summary="Some summary.")
 
 
 def _bar(code="AAPL.US", date="2026-01-01", close=227.14):
@@ -100,6 +107,38 @@ def test_get_stock_news_tool_returns_text_only():
         result = agent.get_stock_news.invoke({"tickers": ["AAPL"]})
 
     assert "Apple hits new high" in result
+
+
+def test_run_geo_news_tool_formats_headlines():
+    with patch("stoxlib.tools.fetch_geo_news", return_value=[_geo_article()]):
+        text, articles = agent.run_geo_news_tool("Taiwan chip export controls")
+
+    assert "Taiwan tightens chip export rules" in text
+    assert "https://example.com/g" in text
+    assert articles == [_geo_article()]
+
+
+def test_run_geo_news_tool_reports_no_results():
+    with patch("stoxlib.tools.fetch_geo_news", return_value=[]):
+        text, articles = agent.run_geo_news_tool("some obscure query")
+
+    assert text == "no relevant world news found"
+    assert articles == []
+
+
+def test_run_geo_news_tool_surfaces_webz_error():
+    with patch("stoxlib.tools.fetch_geo_news", side_effect=WebzError("access denied")):
+        text, articles = agent.run_geo_news_tool("query")
+
+    assert text == "error: access denied"
+    assert articles == []
+
+
+def test_get_geopolitical_news_tool_returns_text_only():
+    with patch("stoxlib.tools.fetch_geo_news", return_value=[_geo_article()]):
+        result = agent.get_geopolitical_news.invoke({"query": "Taiwan chip export controls"})
+
+    assert "Taiwan tightens chip export rules" in result
 
 
 def test_run_history_tool_summarizes_bars():
@@ -315,6 +354,23 @@ def test_ask_agent_executes_news_tool_then_answers():
     assert result.quotes == []
 
 
+def test_ask_agent_executes_geo_news_tool_then_answers():
+    llm = _FakeLLM([
+        AIMessage(content="", tool_calls=[
+            {"name": "get_geopolitical_news",
+             "args": {"query": "Taiwan chip export controls"}, "id": "call1"},
+        ]),
+        AIMessage(content="Export controls could pressure chipmakers.", tool_calls=[]),
+    ])
+    with patch("stoxlib.tools.fetch_geo_news", return_value=[_geo_article()]):
+        result = agent.ask_agent("how do export controls affect chip stocks?", llm=llm)
+
+    assert result.error is None
+    assert result.text == "Export controls could pressure chipmakers."
+    assert result.geo_articles == [_geo_article()]
+    assert result.quotes == []
+
+
 def test_ask_agent_executes_history_tool_then_answers():
     llm = _FakeLLM([
         AIMessage(content="", tool_calls=[
@@ -363,9 +419,10 @@ def test_ask_agent_executes_analyze_stock_tool_then_answers():
     ])
     fake_result = AnalysisResult(
         ticker="AAPL", trend_text="up", fundamentals_text="solid",
-        news_text="quiet", verdict_text="low risk, favorable",
+        news_text="quiet", geopolitics_text="limited exposure",
+        verdict_text="low risk, favorable",
         quotes=[_quote()], bars=[_bar()], articles=[_article()],
-        fundamentals=_fundamentals(),
+        geo_articles=[_geo_article()], fundamentals=_fundamentals(),
     )
     with patch("stoxlib.analysis.run_analyze_stock_tool", return_value=("...", fake_result)):
         result = agent.ask_agent("should I buy apple?", llm=llm)
@@ -376,6 +433,7 @@ def test_ask_agent_executes_analyze_stock_tool_then_answers():
     assert result.quotes == [_quote()]
     assert result.bars == [_bar()]
     assert result.articles == [_article()]
+    assert result.geo_articles == [_geo_article()]
     assert result.fundamentals == _fundamentals()
 
 
@@ -411,6 +469,25 @@ def test_ask_agent_reads_article_after_getting_its_url_from_news():
         result = agent.ask_agent("what does the apple article say in detail?", llm=llm)
 
     mock_fetch.assert_called_once_with("https://example.com/a")
+    assert result.error is None
+    assert result.text == "Here's the detail from the full article."
+
+
+def test_ask_agent_reads_article_after_getting_its_url_from_geo_news():
+    llm = _FakeLLM([
+        AIMessage(content="", tool_calls=[
+            {"name": "get_geopolitical_news", "args": {"query": "Taiwan tariffs"}, "id": "call1"},
+        ]),
+        AIMessage(content="", tool_calls=[
+            {"name": "read_article", "args": {"url": "https://example.com/g"}, "id": "call2"},
+        ]),
+        AIMessage(content="Here's the detail from the full article.", tool_calls=[]),
+    ])
+    with patch("stoxlib.tools.fetch_geo_news", return_value=[_geo_article()]), \
+         patch("stoxlib.tools.fetch_article_text", return_value="full article text") as mock_fetch:
+        result = agent.ask_agent("what does that article say in detail?", llm=llm)
+
+    mock_fetch.assert_called_once_with("https://example.com/g")
     assert result.error is None
     assert result.text == "Here's the detail from the full article."
 

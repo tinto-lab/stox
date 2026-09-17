@@ -1,5 +1,5 @@
-"""Multi-agent stock analysis: trend, fundamentals, and news specialists
-feeding into a risk-assessment aggregator.
+"""Multi-agent stock analysis: trend, fundamentals, news, and geopolitics
+specialists feeding into a risk-assessment aggregator.
 
 Each specialist is its own LLM call with a narrow system prompt and its own
 slice of the tool surface from tools.py (reused, not duplicated), so a
@@ -20,9 +20,11 @@ from .considerations import load_considerations
 from .providers import AgentError, build_llm
 from .tool_loop import run_tool_loop
 from .tools import (UNKNOWN_ARTICLE_URL_ERROR, get_company_fundamentals,
-                     get_price_history, get_stock_news, get_stock_quote,
-                     read_article, run_fundamentals_tool, run_history_tool,
-                     run_news_tool, run_quote_tool, run_read_article_tool)
+                     get_geopolitical_news, get_price_history,
+                     get_stock_news, get_stock_quote, read_article,
+                     run_fundamentals_tool, run_geo_news_tool,
+                     run_history_tool, run_news_tool, run_quote_tool,
+                     run_read_article_tool)
 
 MAX_TOOL_ROUNDS = 6
 
@@ -145,18 +147,64 @@ def _run_news_agent(llm, ticker, on_tool_call=None):
     return text, state["articles"]
 
 
+GEOPOLITICS_AGENT_SYSTEM = (
+    "You are stox's geopolitics analyst. Given a ticker, think about which "
+    "countries, regions, and macro forces the company is actually exposed "
+    "to -- headquarters and key markets, manufacturing and supply chain, "
+    "commodity inputs, regulatory jurisdictions, major competitors' home "
+    "countries -- and call get_geopolitical_news with free-text queries "
+    "about those angles, not the ticker symbol (get_geopolitical_news "
+    "isn't ticker-scoped). Search creatively and from more than one angle "
+    "if the first query comes back thin: tariffs, export controls, "
+    "sanctions, elections, central-bank policy, regional conflict, "
+    "currency moves, commodity prices, and similar. If a headline needs "
+    "more depth, call read_article with its exact url from "
+    "get_geopolitical_news's results -- only urls that came from "
+    "get_geopolitical_news, not urls from anywhere else. In 2-4 sentences, "
+    "explain what geopolitical or macro forces could move this stock and "
+    "how -- say plainly if nothing relevant turns up rather than forcing a "
+    "connection. Don't give a buy/sell verdict -- that's someone else's job."
+)
+
+
+def _run_geopolitics_agent(llm, ticker, on_tool_call=None):
+    state = {"articles": [], "known_urls": set()}
+
+    def dispatch(name, args):
+        if name == "get_geopolitical_news":
+            text, articles = run_geo_news_tool(args.get("query") or ticker, limit=args.get("limit", 5))
+            state["articles"] = articles or state["articles"]
+            state["known_urls"].update(a.link for a in articles if a.link)
+            return text
+        if name == "read_article":
+            url = args.get("url", "")
+            if url not in state["known_urls"]:
+                return UNKNOWN_ARTICLE_URL_ERROR
+            return run_read_article_tool(url)
+        return "unknown tool"
+
+    text = _run_specialist(
+        llm, GEOPOLITICS_AGENT_SYSTEM, [get_geopolitical_news, read_article],
+        "Analyze geopolitical and macro risk for %s." % ticker, dispatch, on_tool_call,
+    )
+    return text, state["articles"]
+
+
 AGGREGATOR_SYSTEM = (
     "You are stox's aggregator. You're given a trend analysis, a "
-    "fundamentals analysis, and a news analysis for one ticker, each "
-    "written by a specialist who didn't see the others' work and has no "
-    "tools of its own. Synthesize a risk assessment: 2-3 bullish factors, "
-    "2-3 bearish/risk factors, an overall risk level (low/medium/high), "
-    "and a directional lean (favorable/neutral/cautious). This is a "
-    "framework for the user's own decision, not a directive to buy or "
-    "sell, and not personalized financial advice. Weigh any standing "
-    "considerations listed below. Keep it tight: plain text, short bullet "
-    "lines, no markdown headers -- the three source analyses are shown to "
-    "the user separately, so don't just repeat them."
+    "fundamentals analysis, a news analysis, and a geopolitical analysis "
+    "for one ticker, each written by a specialist who didn't see the "
+    "others' work and has no tools of its own. Synthesize a risk "
+    "assessment: 2-3 bullish factors, 2-3 bearish/risk factors, an overall "
+    "risk level (low/medium/high), and a directional lean "
+    "(favorable/neutral/cautious). Fold in the geopolitical analysis "
+    "where it's actually relevant -- don't force a connection if that "
+    "specialist found nothing notable. This is a framework for the user's "
+    "own decision, not a directive to buy or sell, and not personalized "
+    "financial advice. Weigh any standing considerations listed below. "
+    "Keep it tight: plain text, short bullet lines, no markdown headers "
+    "-- the four source analyses are shown to the user separately, so "
+    "don't just repeat them."
 )
 
 
@@ -171,10 +219,12 @@ def _aggregator_system_prompt():
     return AGGREGATOR_SYSTEM + "\n\nStanding considerations to weigh:\n%s" % bullets
 
 
-def _run_aggregator(llm, ticker, trend_text, fundamentals_text, news_text):
+def _run_aggregator(llm, ticker, trend_text, fundamentals_text, news_text, geopolitics_text):
     prompt = (
         "Ticker: %s\n\nTrend analysis:\n%s\n\nFundamentals analysis:\n%s\n\n"
-        "News analysis:\n%s" % (ticker, trend_text, fundamentals_text, news_text)
+        "News analysis:\n%s\n\nGeopolitical analysis:\n%s" % (
+            ticker, trend_text, fundamentals_text, news_text, geopolitics_text,
+        )
     )
     messages = [SystemMessage(content=_aggregator_system_prompt()), HumanMessage(content=prompt)]
     ai_msg = llm.invoke(messages)
@@ -187,41 +237,43 @@ class AnalysisResult:
     trend_text: str = ""
     fundamentals_text: str = ""
     news_text: str = ""
+    geopolitics_text: str = ""
     verdict_text: str = ""
     quotes: list = field(default_factory=list)
     bars: list = field(default_factory=list)
     articles: list = field(default_factory=list)
+    geo_articles: list = field(default_factory=list)
     fundamentals: object = None
     error: str | None = None
 
 
 def run_stock_analysis(ticker, llm=None, on_agent_start=None, on_tool_call=None):
-    """Run the trend, fundamentals, and news specialist agents for `ticker`
-    concurrently (each hits a different data source and doesn't depend on
-    the others' output), then the aggregator once all three are done,
-    returning an AnalysisResult.
+    """Run the trend, fundamentals, news, and geopolitics specialist agents
+    for `ticker` concurrently (each hits a different data source and
+    doesn't depend on the others' output), then the aggregator once all
+    four are done, returning an AnalysisResult.
 
     `llm` is injectable (tests can pass a fake chat model); by default it's
-    built from the configured provider. All four agents share this one
+    built from the configured provider. All five agents share this one
     model -- "separate agents" here means separate system prompts, tool
-    access, and LLM calls, not separate providers. The three specialists
+    access, and LLM calls, not separate providers. The four specialists
     each call it from their own thread (via ThreadPoolExecutor, since the
     whole codebase is synchronous -- requests.get and llm.invoke, not
     async); LangChain chat models are safe to invoke concurrently from one
     shared instance the same way Runnable.batch() already does internally.
 
     `on_agent_start`, if given, is called as `on_agent_start(name)` with
-    one of "trend", "fundamentals", "news", "aggregator". Since the three
-    specialists start together, all three fire (in that order, from the
-    main thread) right before they're submitted to the pool, rather than
-    one at a time as each actually begins -- there's no meaningful
-    "started" instant to report per specialist once they're concurrent.
-    "aggregator" still fires right before that call, once the other three
-    have finished. `on_tool_call`, if given, is called as
+    one of "trend", "fundamentals", "news", "geopolitics", "aggregator".
+    Since the four specialists start together, all four fire (in that
+    order, from the main thread) right before they're submitted to the
+    pool, rather than one at a time as each actually begins -- there's no
+    meaningful "started" instant to report per specialist once they're
+    concurrent. "aggregator" still fires right before that call, once the
+    other four have finished. `on_tool_call`, if given, is called as
     `on_tool_call(agent_name, tool_name, args)` -- note the extra leading
     agent_name versus agent.ask_agent's `on_tool_call(name, args)`, needed
     here so a caller printing progress can attribute an interleaved call
-    to the specialist that made it. It may be called from any of the three
+    to the specialist that made it. It may be called from any of the four
     specialist threads and must be safe to call concurrently (e.g. behind
     a lock if it prints to a shared console).
     """
@@ -241,27 +293,33 @@ def run_stock_analysis(ticker, llm=None, on_agent_start=None, on_tool_call=None)
             on_agent_start("trend")
             on_agent_start("fundamentals")
             on_agent_start("news")
+            on_agent_start("geopolitics")
 
-        with ThreadPoolExecutor(max_workers=3) as pool:
+        with ThreadPoolExecutor(max_workers=4) as pool:
             trend_future = pool.submit(_run_trend_agent, llm, ticker, _tool_call_for("trend"))
             fundamentals_future = pool.submit(
                 _run_fundamentals_agent, llm, ticker, _tool_call_for("fundamentals"))
             news_future = pool.submit(_run_news_agent, llm, ticker, _tool_call_for("news"))
+            geopolitics_future = pool.submit(
+                _run_geopolitics_agent, llm, ticker, _tool_call_for("geopolitics"))
 
             trend_text, quotes, bars = trend_future.result()
             fundamentals_text, fundamentals = fundamentals_future.result()
             news_text, articles = news_future.result()
+            geopolitics_text, geo_articles = geopolitics_future.result()
 
         if on_agent_start is not None:
             on_agent_start("aggregator")
-        verdict_text = _run_aggregator(llm, ticker, trend_text, fundamentals_text, news_text)
+        verdict_text = _run_aggregator(
+            llm, ticker, trend_text, fundamentals_text, news_text, geopolitics_text)
     except Exception as e:
         return AnalysisResult(ticker=ticker, error="analysis error: %s" % e)
 
     return AnalysisResult(
         ticker=ticker, trend_text=trend_text, fundamentals_text=fundamentals_text,
-        news_text=news_text, verdict_text=verdict_text, quotes=quotes, bars=bars,
-        articles=articles, fundamentals=fundamentals,
+        news_text=news_text, geopolitics_text=geopolitics_text, verdict_text=verdict_text,
+        quotes=quotes, bars=bars, articles=articles, geo_articles=geo_articles,
+        fundamentals=fundamentals,
     )
 
 
@@ -273,9 +331,10 @@ def run_analyze_stock_tool(ticker, llm=None):
         return "error: %s" % result.error, None
 
     text = (
-        "trend: %s\n\nfundamentals: %s\n\nnews: %s\n\nrisk_assessment: %s" % (
+        "trend: %s\n\nfundamentals: %s\n\nnews: %s\n\ngeopolitics: %s\n\n"
+        "risk_assessment: %s" % (
             result.trend_text, result.fundamentals_text, result.news_text,
-            result.verdict_text,
+            result.geopolitics_text, result.verdict_text,
         )
     )
     return text, result
@@ -284,9 +343,10 @@ def run_analyze_stock_tool(ticker, llm=None):
 @tool
 def analyze_stock(ticker: str) -> str:
     """Run a full multi-agent analysis of one ticker: dedicated trend,
-    fundamentals, and news agents each produce a focused analysis, then an
-    aggregator combines them into a risk assessment (bullish/bearish
-    factors, an overall risk level, and a directional lean).
+    fundamentals, news, and geopolitics agents each produce a focused
+    analysis, then an aggregator combines them into a risk assessment
+    (bullish/bearish factors, an overall risk level, and a directional
+    lean).
 
     Use this for buy/sell/risk questions or requests for a full analysis --
     it's slower than the individual data tools (it makes several LLM
