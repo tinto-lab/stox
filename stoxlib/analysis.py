@@ -10,6 +10,7 @@ tools itself -- it synthesizes, it doesn't investigate.
 Returns data (AnalysisResult), never prints -- same rule as agent.py.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
@@ -211,17 +212,33 @@ class AnalysisResult:
 
 def run_stock_analysis(ticker, llm=None, on_agent_start=None, on_tool_call=None):
     """Run the trend, fundamentals, and news specialist agents for `ticker`
-    in sequence, then the aggregator, returning an AnalysisResult.
+    concurrently (each hits a different data source and doesn't depend on
+    the others' output), then the aggregator once all three are done,
+    returning an AnalysisResult.
 
     `llm` is injectable (tests can pass a fake chat model); by default it's
     built from the configured provider. All four agents share this one
     model -- "separate agents" here means separate system prompts, tool
-    access, and LLM calls, not separate providers.
+    access, and LLM calls, not separate providers. The three specialists
+    each call it from their own thread (via ThreadPoolExecutor, since the
+    whole codebase is synchronous -- requests.get and llm.invoke, not
+    async); LangChain chat models are safe to invoke concurrently from one
+    shared instance the same way Runnable.batch() already does internally.
 
     `on_agent_start`, if given, is called as `on_agent_start(name)` with
-    one of "trend", "fundamentals", "news", "aggregator" right before that
-    agent starts, so the caller can show progress. `on_tool_call` is
-    forwarded to each specialist the same way agent.ask_agent uses it.
+    one of "trend", "fundamentals", "news", "aggregator". Since the three
+    specialists start together, all three fire (in that order, from the
+    main thread) right before they're submitted to the pool, rather than
+    one at a time as each actually begins -- there's no meaningful
+    "started" instant to report per specialist once they're concurrent.
+    "aggregator" still fires right before that call, once the other three
+    have finished. `on_tool_call`, if given, is called as
+    `on_tool_call(agent_name, tool_name, args)` -- note the extra leading
+    agent_name versus agent.ask_agent's `on_tool_call(name, args)`, needed
+    here so a caller printing progress can attribute an interleaved call
+    to the specialist that made it. It may be called from any of the three
+    specialist threads and must be safe to call concurrently (e.g. behind
+    a lock if it prints to a shared console).
     """
     if llm is None:
         try:
@@ -229,18 +246,26 @@ def run_stock_analysis(ticker, llm=None, on_agent_start=None, on_tool_call=None)
         except AgentError as e:
             return AnalysisResult(ticker=ticker, error=str(e))
 
+    def _tool_call_for(agent_name):
+        if on_tool_call is None:
+            return None
+        return lambda name, args: on_tool_call(agent_name, name, args)
+
     try:
         if on_agent_start is not None:
             on_agent_start("trend")
-        trend_text, quotes, bars = _run_trend_agent(llm, ticker, on_tool_call)
-
-        if on_agent_start is not None:
             on_agent_start("fundamentals")
-        fundamentals_text, fundamentals = _run_fundamentals_agent(llm, ticker, on_tool_call)
-
-        if on_agent_start is not None:
             on_agent_start("news")
-        news_text, articles = _run_news_agent(llm, ticker, on_tool_call)
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            trend_future = pool.submit(_run_trend_agent, llm, ticker, _tool_call_for("trend"))
+            fundamentals_future = pool.submit(
+                _run_fundamentals_agent, llm, ticker, _tool_call_for("fundamentals"))
+            news_future = pool.submit(_run_news_agent, llm, ticker, _tool_call_for("news"))
+
+            trend_text, quotes, bars = trend_future.result()
+            fundamentals_text, fundamentals = fundamentals_future.result()
+            news_text, articles = news_future.result()
 
         if on_agent_start is not None:
             on_agent_start("aggregator")

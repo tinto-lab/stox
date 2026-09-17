@@ -157,6 +157,59 @@ def test_handle_command_analyze_without_a_ticker_shows_usage(test_console):
     assert "usage" in test_console.export_text()
 
 
+def test_handle_analyze_passes_the_analysis_callbacks(test_console):
+    """run_stock_analysis's specialists run concurrently in threads, so
+    handle_analyze must wire it to _print_analysis_tool_call (which takes
+    a leading agent_name and locks the console) rather than plain
+    _print_tool_call (used for the single-threaded ask_agent path)."""
+    from stoxlib.analysis import AnalysisResult
+
+    with patch("stoxlib.shell.run_stock_analysis",
+               return_value=AnalysisResult(ticker="AAPL")) as mock_run:
+        shell.handle_analyze("AAPL")
+
+    assert mock_run.call_args.kwargs["on_agent_start"] is shell._print_agent_start
+    assert mock_run.call_args.kwargs["on_tool_call"] is shell._print_analysis_tool_call
+
+
+def test_print_analysis_tool_call_shows_agent_name_and_args(test_console):
+    shell._print_analysis_tool_call("news", "get_stock_news", {"tickers": ["TSLA"]})
+    output = test_console.export_text()
+    assert "news" in output
+    assert "get_stock_news" in output
+    assert "TSLA" in output
+
+
+def test_print_analysis_tool_call_does_not_let_args_be_parsed_as_markup(test_console):
+    shell._print_analysis_tool_call("news", "read_article", {"url": "[bold red]not a style tag[/]"})
+    output = test_console.export_text()
+    assert "[bold red]not a style tag[/]" in output
+
+
+def test_print_analysis_tool_call_is_safe_under_concurrent_calls(test_console):
+    """Simulates the real usage from run_stock_analysis: several threads
+    calling the same callback at once must not corrupt Console output --
+    every line printed must come out intact and attributable."""
+    import threading
+
+    def _hammer(agent_name):
+        for i in range(20):
+            shell._print_analysis_tool_call(agent_name, "get_stock_quote", {"i": i})
+
+    threads = [threading.Thread(target=_hammer, args=(name,))
+               for name in ("trend", "fundamentals", "news")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    lines = [line for line in test_console.export_text().splitlines() if line.strip()]
+    assert len(lines) == 60
+    for line in lines:
+        assert "get_stock_quote" in line
+        assert any(name in line for name in ("trend", "fundamentals", "news"))
+
+
 def test_handle_query_shows_provider_and_answer(test_console, monkeypatch):
     monkeypatch.setenv("STOX_LLM_PROVIDER", "deepseek")
     result = AgentResult(text="Apple is up today.", quotes=[_quote()])

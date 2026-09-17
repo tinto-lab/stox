@@ -13,6 +13,7 @@ shortcut left, for an instant, LLM-free quote lookup.
 import atexit
 import os
 import re
+import threading
 
 from rich.console import Console
 from rich.panel import Panel
@@ -32,6 +33,16 @@ except ImportError:
     readline = None
 
 console = Console()
+
+# run_stock_analysis runs its three specialists concurrently in separate
+# threads (see analysis.py), and Console.print isn't guaranteed safe against
+# unmanaged concurrent writes from multiple threads -- every print that can
+# happen from one of those threads (a specialist's tool-call callback) goes
+# through this lock so lines from different specialists don't interleave
+# mid-line. Printing from the main thread (everything else) doesn't need it,
+# but taking an uncontended lock is cheap, so _print_tool_call holds it too
+# rather than having two similar-looking print paths, only one of which locks.
+_console_lock = threading.Lock()
 
 HISTORY_FILE = CONFIG_DIR / "history"
 
@@ -227,7 +238,19 @@ def _print_tool_call(name, args):
     external content (an article's text), so treat them as untrusted.
     """
     params = ", ".join("%s=%r" % (k, v) for k, v in args.items())
-    console.print(Text("  ↳ %s(%s)" % (name, params), style="dim"))
+    with _console_lock:
+        console.print(Text("  ↳ %s(%s)" % (name, params), style="dim"))
+
+
+def _print_analysis_tool_call(agent_name, name, args):
+    """Called by run_stock_analysis, from whichever of the three specialist
+    threads makes a tool call -- the counterpart to _print_tool_call, with
+    an extra leading agent_name (see run_stock_analysis's on_tool_call
+    docstring) so concurrent, interleaved tool calls from different
+    specialists are still attributable to the one that made each call."""
+    params = ", ".join("%s=%r" % (k, v) for k, v in args.items())
+    with _console_lock:
+        console.print(Text("  ↳ [%s] %s(%s)" % (agent_name, name, params), style="dim"))
 
 
 def _show_result_data(quotes, bars, fundamentals, articles):
@@ -275,8 +298,10 @@ def handle_query(text, history):
 
 
 def _print_agent_start(name):
-    """Called by run_stock_analysis right before each specialist starts,
-    for visibility into which stage a slow multi-agent run is on."""
+    """Called by run_stock_analysis for visibility into which stage a slow
+    multi-agent run is on: trend/fundamentals/news fire together right
+    before they're kicked off concurrently, then aggregator fires once all
+    three are back (see run_stock_analysis's on_agent_start docstring)."""
     console.print(Text("→ %s agent" % name, style="dim"))
 
 
@@ -284,9 +309,11 @@ def handle_analyze(ticker):
     """The /analyze command: run the full trend/fundamentals/news pipeline
     and the aggregator's risk assessment for one ticker directly, without
     going through the general chat agent."""
-    console.print("[dim]→ analyzing %s · this runs 4 LLM calls, please wait[/]" % normalize(ticker))
+    console.print("[dim]→ analyzing %s · trend, fundamentals, and news run "
+                   "concurrently, then an aggregator · 4 LLM calls, please "
+                   "wait[/]" % normalize(ticker))
     result = run_stock_analysis(ticker, on_agent_start=_print_agent_start,
-                                 on_tool_call=_print_tool_call)
+                                 on_tool_call=_print_analysis_tool_call)
 
     if result.error:
         console.print("[red]✗[/] %s" % result.error)
