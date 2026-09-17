@@ -2,6 +2,8 @@
 #
 # rich, requests, python-dotenv, and langchain-core are required for the
 # app to start at all (quote lookup + the agent's tool-calling machinery).
+# trafilatura extracts readable article text from a page's raw HTML, for
+# the agent's read_article tool (stoxlib/webfetch.py).
 # The three langchain-<provider> packages are each only imported lazily,
 # at the moment you actually use that provider (see stoxlib/providers.py)
 # -- but all three are listed here so `pip install -r requirements.txt`
@@ -11,6 +13,7 @@
 rich==15.0.0
 requests==2.34.2
 python-dotenv==1.2.3
+trafilatura==2.2.0
 langchain-core==1.6.3
 langchain-anthropic==1.7.2
 langchain-deepseek==1.1.0

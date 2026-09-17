@@ -5,8 +5,9 @@ from unittest.mock import patch
 import pytest
 from rich.console import Console
 
-from stoxlib import shell
+from stoxlib import considerations, shell
 from stoxlib.agent import AgentResult
+from stoxlib.news import Article
 from stoxlib.quotes import Quote, QuoteError
 
 
@@ -56,24 +57,66 @@ def test_prompt_string_brackets_ansi_codes_for_readline(monkeypatch):
     ("what is the price of apple stock today?", True),
     ("what's apple trading at", True),
     ("how much is tesla worth", True),
+    ("any news on tesla?", True),
+    ("TSLA news", True),
+    ("latest headlines for apple", True),
 ])
 def test_looks_like_query(text, expected):
     assert shell._looks_like_query(text) is expected
 
 
 def test_handle_command_quit_signals_stop(test_console):
-    assert shell.handle_command("/quit") is False
+    assert shell.handle_command("/quit", []) is False
     assert "bye" in test_console.export_text()
 
 
 def test_handle_command_help_shows_help_text(test_console):
-    assert shell.handle_command("/help") is True
+    assert shell.handle_command("/help", []) is True
     assert "commands" in test_console.export_text()
 
 
 def test_handle_command_unknown_reports_error(test_console):
-    assert shell.handle_command("/bogus") is True
+    assert shell.handle_command("/bogus", []) is True
     assert "unknown command" in test_console.export_text()
+
+
+@pytest.mark.parametrize("cmd", ["/reset", "/new"])
+def test_handle_command_reset_clears_history(test_console, cmd):
+    from langchain_core.messages import HumanMessage
+
+    history = [HumanMessage(content="what is apple trading at?")]
+    assert shell.handle_command(cmd, history) is True
+    assert history == []
+    assert "forgotten" in test_console.export_text()
+
+
+@pytest.mark.parametrize("cmd", ["/considerations", "/remembered"])
+def test_handle_command_considerations_lists_stored_items(test_console, cmd):
+    considerations.add_consideration("always factor in insider selling")
+    assert shell.handle_command(cmd, []) is True
+    output = test_console.export_text()
+    assert "always factor in insider selling" in output
+
+
+def test_handle_command_considerations_reports_when_empty(test_console):
+    assert shell.handle_command("/considerations", []) is True
+    assert "no standing considerations yet" in test_console.export_text()
+
+
+def test_handle_command_considerations_does_not_touch_history(test_console):
+    sentinel = object()
+    history = [sentinel]
+    shell.handle_command("/considerations", history)
+    assert history == [sentinel]
+
+
+def test_show_considerations_does_not_let_items_be_parsed_as_markup(test_console):
+    """Consideration text traces back through the model, which may have
+    ingested external content -- a stray '[' must render literally."""
+    considerations.add_consideration("[bold red]not a style tag[/]")
+    shell.handle_command("/considerations", [])
+    output = test_console.export_text()
+    assert "[bold red]not a style tag[/]" in output
 
 
 def test_handle_tickers_success(test_console):
@@ -99,7 +142,7 @@ def test_handle_query_shows_provider_and_answer(test_console, monkeypatch):
     monkeypatch.setenv("STOX_LLM_PROVIDER", "deepseek")
     result = AgentResult(text="Apple is up today.", quotes=[_quote()])
     with patch("stoxlib.agent.ask_agent", return_value=result):
-        shell.handle_query("what is apple trading at?")
+        shell.handle_query("what is apple trading at?", [])
     output = test_console.export_text()
     assert "deepseek" in output
     assert "Apple is up today." in output
@@ -109,8 +152,89 @@ def test_handle_query_shows_provider_and_answer(test_console, monkeypatch):
 def test_handle_query_reports_error(test_console):
     result = AgentResult(error="no ANTHROPIC_API_KEY set -- see /help")
     with patch("stoxlib.agent.ask_agent", return_value=result):
-        shell.handle_query("what is apple trading at?")
+        shell.handle_query("what is apple trading at?", [])
     assert "no ANTHROPIC_API_KEY set" in test_console.export_text()
+
+
+def test_handle_query_passes_the_same_history_object_to_the_agent(test_console):
+    """Regression: the agent had no memory of prior turns because nothing
+    threaded conversation state through. handle_query must hand ask_agent
+    the exact history list it was given, so ask_agent's in-place updates
+    are visible to the caller on the next call."""
+    history = []
+    result = AgentResult(text="ok")
+    with patch("stoxlib.agent.ask_agent", return_value=result) as mock_ask:
+        shell.handle_query("what is apple trading at?", history)
+    assert mock_ask.call_args.kwargs["history"] is history
+
+
+def test_handle_query_passes_the_tool_call_callback_to_the_agent():
+    result = AgentResult(text="ok")
+    with patch("stoxlib.agent.ask_agent", return_value=result) as mock_ask:
+        shell.handle_query("any news on apple?", [])
+    assert mock_ask.call_args.kwargs["on_tool_call"] is shell._print_tool_call
+
+
+def test_print_tool_call_shows_name_and_args(test_console):
+    shell._print_tool_call("get_stock_news", {"tickers": ["TSLA"], "limit": 5})
+    output = test_console.export_text()
+    assert "get_stock_news" in output
+    assert "TSLA" in output
+
+
+def test_print_tool_call_does_not_let_args_be_parsed_as_markup(test_console):
+    """Args trace back through the model, which may have ingested external
+    content -- a stray '[' must render literally, not as a style tag."""
+    shell._print_tool_call("read_article", {"url": "[bold red]not a style tag[/]"})
+    output = test_console.export_text()
+    assert "[bold red]not a style tag[/]" in output
+
+
+def test_handle_query_shows_tool_calls_end_to_end(test_console):
+    """Full path through ask_agent (not mocked) with a fake LLM, proving a
+    tool call the model makes is actually visible to the user."""
+    from langchain_core.messages import AIMessage
+
+    class _FakeLLM:
+        def __init__(self, responses):
+            self._responses = list(responses)
+
+        def bind_tools(self, tools):
+            return self
+
+        def invoke(self, messages):
+            return self._responses.pop(0)
+
+    llm = _FakeLLM([
+        AIMessage(content="", tool_calls=[
+            {"name": "get_stock_news", "args": {"tickers": ["TSLA"], "limit": 3}, "id": "call1"},
+        ]),
+        AIMessage(content="Tesla has some news today.", tool_calls=[]),
+    ])
+    with patch("stoxlib.agent.build_llm", return_value=llm), \
+         patch("stoxlib.agent.fetch_news", return_value=[_article(title="Tesla news")]):
+        shell.handle_query("any news on tesla?", [])
+
+    output = test_console.export_text()
+    assert "get_stock_news" in output
+    assert "TSLA" in output
+    assert "Tesla has some news today." in output
+
+
+def _article(title="Apple hits new high"):
+    return Article(title=title, date="2026-01-01T12:00:00+00:00",
+                    link="https://example.com/a", symbols=["AAPL.US"],
+                    sentiment={"polarity": 0.9}, summary="Some summary.")
+
+
+def test_handle_query_shows_news(test_console):
+    result = AgentResult(text="Here's the latest.", articles=[_article()])
+    with patch("stoxlib.agent.ask_agent", return_value=result):
+        shell.handle_query("any news on apple?", [])
+    output = test_console.export_text()
+    assert "Here's the latest." in output
+    assert "Apple hits new high" in output
+    assert "https://example.com/a" in output
 
 
 def test_main_routes_input_and_stops_on_quit(test_console, monkeypatch):
@@ -119,19 +243,29 @@ def test_main_routes_input_and_stops_on_quit(test_console, monkeypatch):
     monkeypatch.setattr(shell, "load_env", lambda: None)
     monkeypatch.setattr(shell, "_setup_readline", lambda: None)
 
-    inputs = iter(["AAPL", "what is apple trading at?", "/quit"])
+    inputs = iter(["AAPL", "what is apple trading at?", "any news on apple?", "/quit"])
     monkeypatch.setattr(shell, "input", lambda *_args, **_kwargs: next(inputs), raising=False)
 
     calls = []
+    history_objects_seen = []
     monkeypatch.setattr(shell, "handle_tickers", lambda text: calls.append(("tickers", text)))
-    monkeypatch.setattr(shell, "handle_query", lambda text: calls.append(("query", text)))
+
+    def _fake_handle_query(text, history):
+        calls.append(("query", text))
+        history_objects_seen.append(history)
+
+    monkeypatch.setattr(shell, "handle_query", _fake_handle_query)
 
     shell.main()
 
     assert calls == [
         ("tickers", "AAPL"),
         ("query", "what is apple trading at?"),
+        ("query", "any news on apple?"),
     ]
+    # the same history list must be reused across turns, or ask_agent's
+    # in-place updates from the first query would never reach the second
+    assert history_objects_seen[0] is history_objects_seen[1]
 
 
 def test_main_stops_cleanly_on_eof(test_console, monkeypatch):

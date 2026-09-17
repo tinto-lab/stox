@@ -15,8 +15,9 @@ from rich.text import Text
 
 from . import agent, providers
 from .config import CONFIG_DIR, load_env
+from .considerations import CONSIDERATIONS_FILE, load_considerations
 from .quotes import QuoteError, api_key, fetch_quotes, normalize
-from .rendering import show_quote, show_quotes_compact
+from .rendering import show_news, show_quote, show_quotes_compact
 
 try:
     import readline
@@ -58,8 +59,16 @@ BANNER = ("[bold]stox[/] · research console\n"
 HELP = """[bold]commands[/]
   <ticker> [...]   fetch quote(s):  AAPL   or   TSLA MSFT NVDA
   <question>       ask in plain English:  what's apple trading at today?
+                                           any news on tesla?
+                                           always factor in insider selling
+                                           when you explain price moves
+                                           the agent remembers this session --
+                                           follow-ups like "what about its news?"
+                                           and "read that first one in full" work
   /help            this message
   /clear           clear the screen
+  /reset           forget the conversation so far (also /new)
+  /considerations  list standing factors the agent always weighs (also /remembered)
   /quit  /exit     leave
 
 [bold]tickers[/]
@@ -78,12 +87,17 @@ HELP = """[bold]commands[/]
   plain-English questions need an LLM provider:
     STOX_LLM_PROVIDER=anthropic|deepseek|openai  (default: anthropic)
     STOX_LLM_MODEL=...     optional, each provider has a default
-    ANTHROPIC_API_KEY=...  or DEEPSEEK_API_KEY / OPENAI_API_KEY"""
+    ANTHROPIC_API_KEY=...  or DEEPSEEK_API_KEY / OPENAI_API_KEY
+
+  standing considerations persist to ~/.config/stox/considerations.txt --
+  plain text, one per line, safe to hand-edit or delete."""
 
 _QUERY_HINTS = {
     "what", "whats", "what's", "is", "are", "the", "of", "how", "much",
     "price", "stock", "shares", "today", "tell", "me", "show", "give",
     "about", "does", "do", "doing", "trading", "worth", "current", "for",
+    "news", "headline", "headlines", "latest", "recent", "happening",
+    "update", "updates",
 }
 
 
@@ -138,7 +152,21 @@ def _setup_readline():
             pass  # best-effort -- terminal/readline combo may not agree
 
 
-def handle_command(cmd):
+def _show_considerations():
+    """List standing considerations stored on disk (see /reset for
+    session-only conversation memory, which this is not)."""
+    items = load_considerations()
+    if not items:
+        console.print("[dim]no standing considerations yet -- tell the agent "
+                       "to always factor something in, or edit %s "
+                       "directly.[/]" % CONSIDERATIONS_FILE)
+        return
+    console.print("[dim]standing considerations (%s):[/]" % CONSIDERATIONS_FILE)
+    for item in items:
+        console.print(Text("  - " + item))
+
+
+def handle_command(cmd, history):
     cmd = cmd.lower()
     if cmd in ("/quit", "/exit", "/q"):
         console.print("[dim]bye.[/]")
@@ -148,6 +176,11 @@ def handle_command(cmd):
     elif cmd == "/clear":
         console.clear()
         console.print(Panel(BANNER, border_style="cyan", expand=False))
+    elif cmd in ("/reset", "/new"):
+        history.clear()
+        console.print("[dim]conversation forgotten -- starting fresh.[/]")
+    elif cmd in ("/considerations", "/remembered"):
+        _show_considerations()
     else:
         console.print("[red]unknown command:[/] %s  [dim](try /help)[/]" % cmd)
     return True
@@ -173,10 +206,25 @@ def handle_tickers(text):
         show_quotes_compact(console, quotes)
 
 
-def handle_query(text):
-    """The natural-language path: hand off to the agent, then render its result."""
+def _print_tool_call(name, args):
+    """Called by ask_agent right before each tool runs, for visibility into
+    what the model is doing (e.g. "did it actually fetch news, or just
+    answer from memory?"). Wrapped in Text() rather than markup -- args
+    ultimately trace back through the model, which may have ingested
+    external content (an article's text), so treat them as untrusted.
+    """
+    params = ", ".join("%s=%r" % (k, v) for k, v in args.items())
+    console.print(Text("  ↳ %s(%s)" % (name, params), style="dim"))
+
+
+def handle_query(text, history):
+    """The natural-language path: hand off to the agent, then render its result.
+
+    `history` carries prior turns' messages so follow-ups like "what about
+    its news?" resolve; ask_agent updates it in place.
+    """
     console.print("[dim]→ agent (%s) · %s[/]" % (providers.describe_current(), text))
-    result = agent.ask_agent(text)
+    result = agent.ask_agent(text, history=history, on_tool_call=_print_tool_call)
 
     if result.error:
         console.print("[red]✗[/] %s" % result.error)
@@ -190,6 +238,9 @@ def handle_query(text):
         show_quote(console, result.quotes[0])
     elif result.quotes:
         show_quotes_compact(console, result.quotes)
+
+    if result.articles:
+        show_news(console, result.articles)
 
 
 def main():
@@ -208,6 +259,8 @@ def main():
     else:
         console.print("[dim]LLM provider: %s[/]\n" % providers.describe_current())
 
+    history = []
+
     while True:
         try:
             line = input(PROMPT).strip()
@@ -217,9 +270,9 @@ def main():
         if not line:
             continue
         if line.startswith("/"):
-            if not handle_command(line):
+            if not handle_command(line, history):
                 break
         elif _looks_like_query(line):
-            handle_query(line)
+            handle_query(line, history)
         else:
             handle_tickers(line)
