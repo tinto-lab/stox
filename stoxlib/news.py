@@ -69,7 +69,11 @@ def fetch_news(tickers, limit=5):
     }
 
     try:
-        r = requests.get("%s/news" % EODHD_URL, params=params, timeout=10)
+        # EODHD's ticker-filtered news query (the `s` param) is inherently
+        # slow -- 10-17s observed even for a single ticker, vs. under 2s for
+        # quotes/history -- so it needs a longer timeout than the other
+        # endpoints, not just a bigger margin for jitter.
+        r = requests.get("%s/news" % EODHD_URL, params=params, timeout=25)
     except requests.RequestException as e:
         raise NewsError("network error: %s" % e) from e
 

@@ -5,6 +5,7 @@ to a particular Console instance -- shell.py owns that.
 """
 
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
@@ -66,6 +67,102 @@ def show_quotes_compact(console: Console, quotes):
             "[%s](%+.2f%%)[/]" % (color, q.percent),
         )
     console.print(table)
+    console.print()
+
+
+def show_price_history(console: Console, bars):
+    """Table of OHLC bars for one ticker, oldest first."""
+    if not bars:
+        console.print("[dim]no historical data[/]")
+        console.print()
+        return
+
+    table = Table(title=bars[0].code, show_header=True, header_style="dim",
+                   box=None, padding=(0, 2))
+    table.add_column("date")
+    table.add_column("open", justify="right")
+    table.add_column("high", justify="right")
+    table.add_column("low", justify="right")
+    table.add_column("close", justify="right")
+    table.add_column("volume", justify="right")
+
+    prev_close = None
+    for b in bars:
+        change = 0.0 if prev_close is None else b.close - prev_close
+        arrow, color = _arrow_color(change)
+        table.add_row(
+            b.date[:10],
+            format(b.open, ",.2f"),
+            format(b.high, ",.2f"),
+            format(b.low, ",.2f"),
+            "[%s]%s %s[/]" % (color, arrow, format(b.close, ",.2f")),
+            _fmt_vol(b.volume),
+        )
+        prev_close = b.close
+    console.print(table)
+    console.print()
+
+
+def _fmt_pct(v):
+    return "%+.2f%%" % (v * 100) if v is not None else "n/a"
+
+
+def _fmt_money(v):
+    return _fmt_vol(v) if v is not None else "n/a"
+
+
+def _fmt_ratio(v):
+    return format(v, ",.2f") if v is not None else "n/a"
+
+
+def show_fundamentals(console: Console, f):
+    """Detailed profitability/valuation block for a single ticker."""
+    header = Table.grid(expand=True)
+    header.add_column(justify="left")
+    header.add_column(justify="right")
+    header.add_row("[bold]%s[/]  [dim]%s[/]" % (f.code, f.name),
+                    "[dim]%s · %s[/]" % (f.sector, f.industry))
+    console.print(header)
+    console.print("[dim]" + "─" * 44 + "[/]")
+
+    stats = Table.grid(padding=(0, 4))
+    stats.add_column()
+    stats.add_column()
+    stats.add_row("[dim]market cap[/] %s" % _fmt_money(f.market_cap),
+                  "[dim]ebitda[/] %s" % _fmt_money(f.ebitda))
+    stats.add_row("[dim]revenue ttm[/] %s" % _fmt_money(f.revenue_ttm),
+                  "[dim]eps[/] %s" % _fmt_ratio(f.eps))
+    stats.add_row("[dim]profit margin[/] %s" % _fmt_pct(f.profit_margin),
+                  "[dim]operating margin[/] %s" % _fmt_pct(f.operating_margin))
+    stats.add_row("[dim]roe[/] %s" % _fmt_pct(f.roe),
+                  "[dim]roa[/] %s" % _fmt_pct(f.roa))
+    stats.add_row("[dim]revenue growth yoy[/] %s" % _fmt_pct(f.revenue_growth_yoy),
+                  "[dim]earnings growth yoy[/] %s" % _fmt_pct(f.earnings_growth_yoy))
+    stats.add_row("[dim]p/e[/] %s" % _fmt_ratio(f.pe_ratio),
+                  "[dim]peg[/] %s" % _fmt_ratio(f.peg_ratio))
+    stats.add_row("[dim]dividend yield[/] %s" % _fmt_pct(f.dividend_yield),
+                  "[dim]analyst target[/] %s" % _fmt_ratio(f.analyst_target_price))
+    console.print(stats)
+    console.print()
+
+
+def show_analysis(console: Console, result):
+    """The three specialist write-ups plus the aggregator's risk
+    assessment, for an analysis.AnalysisResult.
+
+    Each panel's text ultimately comes from the LLM, which may have
+    ingested external content (an article's text) -- wrapped in Text()
+    rather than markup so it can never be parsed as a Rich style tag.
+    """
+    console.print(Panel(Text(result.trend_text), title="trend",
+                         border_style="dim", expand=False))
+    console.print(Panel(Text(result.fundamentals_text), title="fundamentals",
+                         border_style="dim", expand=False))
+    console.print(Panel(Text(result.news_text), title="news",
+                         border_style="dim", expand=False))
+    console.print(Panel(Text(result.verdict_text), title="risk assessment",
+                         border_style="yellow", expand=False))
+    console.print("[dim]not financial advice -- for research purposes only.[/]")
     console.print()
 
 

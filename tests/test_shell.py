@@ -50,21 +50,6 @@ def test_prompt_string_brackets_ansi_codes_for_readline(monkeypatch):
     assert prompt[visible_index - 1] != "\x01"
 
 
-@pytest.mark.parametrize("text, expected", [
-    ("AAPL", False),
-    ("TSLA MSFT NVDA", False),
-    ("BTC-USD.CC", False),
-    ("what is the price of apple stock today?", True),
-    ("what's apple trading at", True),
-    ("how much is tesla worth", True),
-    ("any news on tesla?", True),
-    ("TSLA news", True),
-    ("latest headlines for apple", True),
-])
-def test_looks_like_query(text, expected):
-    assert shell._looks_like_query(text) is expected
-
-
 def test_handle_command_quit_signals_stop(test_console):
     assert shell.handle_command("/quit", []) is False
     assert "bye" in test_console.export_text()
@@ -136,6 +121,40 @@ def test_handle_tickers_reports_quote_error(test_console):
     with patch("stoxlib.shell.fetch_quotes", side_effect=QuoteError("access denied")):
         shell.handle_tickers("AAPL")
     assert "access denied" in test_console.export_text()
+
+
+def test_handle_command_price_dispatches_to_handle_tickers(test_console):
+    with patch.object(shell, "handle_tickers") as mock_handle_tickers:
+        shell.handle_command("/price AAPL TSLA", [])
+    mock_handle_tickers.assert_called_once_with("AAPL TSLA")
+
+
+def test_handle_command_price_without_a_ticker_shows_usage(test_console):
+    with patch.object(shell, "handle_tickers") as mock_handle_tickers:
+        shell.handle_command("/price", [])
+    mock_handle_tickers.assert_not_called()
+    assert "usage" in test_console.export_text()
+
+
+def test_handle_command_price_is_llm_free(test_console):
+    """/price must work with no LLM provider configured at all -- it's the
+    one command that bypasses the agent entirely."""
+    with patch("stoxlib.shell.fetch_quotes", return_value=([_quote()], [])):
+        shell.handle_command("/price AAPL", [])
+    assert "227.14" in test_console.export_text()
+
+
+def test_handle_command_analyze_dispatches_to_handle_analyze(test_console):
+    with patch.object(shell, "handle_analyze") as mock_handle_analyze:
+        shell.handle_command("/analyze AAPL", [])
+    mock_handle_analyze.assert_called_once_with("AAPL")
+
+
+def test_handle_command_analyze_without_a_ticker_shows_usage(test_console):
+    with patch.object(shell, "handle_analyze") as mock_handle_analyze:
+        shell.handle_command("/analyze", [])
+    mock_handle_analyze.assert_not_called()
+    assert "usage" in test_console.export_text()
 
 
 def test_handle_query_shows_provider_and_answer(test_console, monkeypatch):
@@ -237,9 +256,31 @@ def test_handle_query_shows_news(test_console):
     assert "https://example.com/a" in output
 
 
+def test_main_routes_bare_ticker_input_to_the_agent(test_console, monkeypatch):
+    """A bare ticker with no slash used to skip the agent entirely (the
+    old, LLM-free "fast path"). Now it's just another line handed to the
+    agent, which decides for itself that a bare ticker means "just the
+    price" and answers accordingly (see AGENT_SYSTEM in agent.py) -- /price
+    is the only way left to skip the agent."""
+    monkeypatch.setattr(shell, "load_env", lambda: None)
+    monkeypatch.setattr(shell, "_setup_readline", lambda: None)
+
+    inputs = iter(["AAPL", "/quit"])
+    monkeypatch.setattr(shell, "input", lambda *_args, **_kwargs: next(inputs), raising=False)
+
+    with patch.object(shell, "handle_tickers") as mock_handle_tickers, \
+         patch.object(shell, "handle_query") as mock_handle_query:
+        shell.main()
+
+    mock_handle_tickers.assert_not_called()
+    mock_handle_query.assert_called_once_with("AAPL", [])
+
+
 def test_main_routes_input_and_stops_on_quit(test_console, monkeypatch):
     """A light integration test: canned input lines should dispatch to the
-    right handler, and /quit should end the loop cleanly."""
+    right handler, and /quit should end the loop cleanly. Every non-slash
+    line -- including a bare ticker -- goes to the agent now; only /price
+    (a slash command, handled by handle_command) skips it."""
     monkeypatch.setattr(shell, "load_env", lambda: None)
     monkeypatch.setattr(shell, "_setup_readline", lambda: None)
 
@@ -248,7 +289,6 @@ def test_main_routes_input_and_stops_on_quit(test_console, monkeypatch):
 
     calls = []
     history_objects_seen = []
-    monkeypatch.setattr(shell, "handle_tickers", lambda text: calls.append(("tickers", text)))
 
     def _fake_handle_query(text, history):
         calls.append(("query", text))
@@ -259,13 +299,48 @@ def test_main_routes_input_and_stops_on_quit(test_console, monkeypatch):
     shell.main()
 
     assert calls == [
-        ("tickers", "AAPL"),
+        ("query", "AAPL"),
         ("query", "what is apple trading at?"),
         ("query", "any news on apple?"),
     ]
     # the same history list must be reused across turns, or ask_agent's
     # in-place updates from the first query would never reach the second
     assert history_objects_seen[0] is history_objects_seen[1]
+
+
+def test_main_routes_price_command_to_handle_tickers(test_console, monkeypatch):
+    """/price is the one input that must skip the agent entirely."""
+    monkeypatch.setattr(shell, "load_env", lambda: None)
+    monkeypatch.setattr(shell, "_setup_readline", lambda: None)
+
+    inputs = iter(["/price AAPL", "/quit"])
+    monkeypatch.setattr(shell, "input", lambda *_args, **_kwargs: next(inputs), raising=False)
+
+    with patch.object(shell, "handle_tickers") as mock_handle_tickers:
+        shell.main()
+
+    mock_handle_tickers.assert_called_once_with("AAPL")
+
+
+def test_main_routes_a_non_english_question_to_the_agent(test_console, monkeypatch):
+    """Regression: a Traditional Chinese question has no spaces and no
+    English hint words, so it used to fall through to handle_tickers,
+    which mangled the whole sentence into one bogus ticker and sent it to
+    the quotes API (HTTP 422). It must route to the agent instead, same as
+    any other natural-language question."""
+    monkeypatch.setattr(shell, "load_env", lambda: None)
+    monkeypatch.setattr(shell, "_setup_readline", lambda: None)
+
+    inputs = iter(["請幫我分析Nvidia的股票", "/quit"])
+    monkeypatch.setattr(shell, "input", lambda *_args, **_kwargs: next(inputs), raising=False)
+
+    calls = []
+    monkeypatch.setattr(shell, "handle_tickers", lambda text: calls.append(("tickers", text)))
+    monkeypatch.setattr(shell, "handle_query", lambda text, history: calls.append(("query", text)))
+
+    shell.main()
+
+    assert calls == [("query", "請幫我分析Nvidia的股票")]
 
 
 def test_main_stops_cleanly_on_eof(test_console, monkeypatch):
