@@ -15,10 +15,10 @@ from dataclasses import dataclass, field
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 
-from .agent import (get_company_fundamentals, get_price_history, get_stock_news,
-                     get_stock_quote, read_article, run_fundamentals_tool,
-                     run_history_tool, run_news_tool, run_quote_tool,
-                     run_read_article_tool)
+from .agent import (UNKNOWN_ARTICLE_URL_ERROR, get_company_fundamentals,
+                     get_price_history, get_stock_news, get_stock_quote,
+                     read_article, run_fundamentals_tool, run_history_tool,
+                     run_news_tool, run_quote_tool, run_read_article_tool)
 from .considerations import load_considerations
 from .providers import AgentError, build_llm
 
@@ -148,7 +148,7 @@ def _run_news_agent(llm, ticker, on_tool_call=None):
         if name == "read_article":
             url = args.get("url", "")
             if url not in state["known_urls"]:
-                return "error: url must be one get_stock_news returned in this conversation"
+                return UNKNOWN_ARTICLE_URL_ERROR
             return run_read_article_tool(url)
         return "unknown tool"
 

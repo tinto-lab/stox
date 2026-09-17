@@ -8,6 +8,8 @@ import os
 
 import requests
 
+from .numeric import _num
+
 EODHD_URL = "https://eodhd.com/api"
 
 
@@ -44,14 +46,6 @@ class QuoteError(Exception):
 def normalize(ticker: str) -> str:
     t = ticker.upper()
     return t if "." in t else t + ".US"
-
-
-def _num(v):
-    """EODHD uses the string 'NA' for missing fields -- coerce safely."""
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return None
 
 
 def _parse(row: dict):

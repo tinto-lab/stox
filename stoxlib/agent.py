@@ -276,6 +276,9 @@ def get_stock_news(tickers: list[str], limit: int = 5) -> str:
     return text
 
 
+UNKNOWN_ARTICLE_URL_ERROR = "error: url must be one get_stock_news returned in this conversation"
+
+
 def run_read_article_tool(url):
     """Fetch and extract an article's full readable text as tool-result text."""
     try:
@@ -407,7 +410,7 @@ def ask_agent(query, history=None, llm=None, on_tool_call=None):
                 elif call["name"] == "read_article":
                     url = args.get("url", "")
                     if url not in known_article_urls:
-                        result_text = "error: url must be one get_stock_news returned in this conversation"
+                        result_text = UNKNOWN_ARTICLE_URL_ERROR
                     else:
                         result_text = run_read_article_tool(url)
                 elif call["name"] == "remember_consideration":

@@ -97,7 +97,7 @@ def test_parse_defaults_missing_optional_fields_to_none_or_empty():
 def test_fetch_fundamentals_uses_the_yahoo_symbol(monkeypatch):
     mock_ticker = Mock()
     mock_ticker.info = _info()
-    with patch("stoxlib.fundamentals.yf.Ticker", return_value=mock_ticker) as mock_cls:
+    with patch("yfinance.Ticker", return_value=mock_ticker) as mock_cls:
         f = fundamentals.fetch_fundamentals("aapl")
 
     mock_cls.assert_called_once_with("AAPL")
@@ -108,13 +108,13 @@ def test_fetch_fundamentals_uses_the_yahoo_symbol(monkeypatch):
 def test_fetch_fundamentals_unknown_symbol_raises(monkeypatch):
     mock_ticker = Mock()
     mock_ticker.info = {"trailingPegRatio": None}  # yfinance's shape for an unknown symbol
-    with patch("stoxlib.fundamentals.yf.Ticker", return_value=mock_ticker):
+    with patch("yfinance.Ticker", return_value=mock_ticker):
         with pytest.raises(fundamentals.FundamentalsError, match="unknown symbol"):
             fundamentals.fetch_fundamentals("ZZZZNOPE")
 
 
 def test_fetch_fundamentals_wraps_any_exception_from_yfinance(monkeypatch):
-    with patch("stoxlib.fundamentals.yf.Ticker", side_effect=RuntimeError("boom")):
+    with patch("yfinance.Ticker", side_effect=RuntimeError("boom")):
         with pytest.raises(fundamentals.FundamentalsError, match="couldn't fetch fundamentals"):
             fundamentals.fetch_fundamentals("AAPL")
 
@@ -122,6 +122,6 @@ def test_fetch_fundamentals_wraps_any_exception_from_yfinance(monkeypatch):
 def test_fetch_fundamentals_non_dict_info_raises(monkeypatch):
     mock_ticker = Mock()
     mock_ticker.info = None
-    with patch("stoxlib.fundamentals.yf.Ticker", return_value=mock_ticker):
+    with patch("yfinance.Ticker", return_value=mock_ticker):
         with pytest.raises(fundamentals.FundamentalsError, match="couldn't parse"):
             fundamentals.fetch_fundamentals("AAPL")

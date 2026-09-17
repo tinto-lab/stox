@@ -9,6 +9,7 @@ from datetime import date, timedelta
 
 import requests
 
+from .numeric import _num
 from .quotes import EODHD_URL, api_key, normalize
 
 PERIODS = {"d", "w", "m"}
@@ -33,14 +34,6 @@ class Bar:
 
 class HistoryError(Exception):
     """Raised when historical prices can't be fetched at all (key/network/plan)."""
-
-
-def _num(v):
-    """EODHD uses the string 'NA' for missing fields -- coerce safely."""
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return None
 
 
 def _parse(code, row: dict):

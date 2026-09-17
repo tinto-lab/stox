@@ -10,7 +10,7 @@ it reads Yahoo Finance's own endpoints rather than a published API, so it
 can change or break without notice and has no documented rate limit or SLA.
 """
 
-import yfinance as yf
+from .numeric import _num
 
 
 class Fundamentals:
@@ -46,13 +46,6 @@ class Fundamentals:
 
 class FundamentalsError(Exception):
     """Raised when fundamentals can't be fetched at all (network/lookup failure)."""
-
-
-def _num(v):
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return None
 
 
 def _yahoo_symbol(ticker):
@@ -106,6 +99,11 @@ def fetch_fundamentals(ticker):
     unrecognized ticker just comes back from yfinance with no longName/
     shortName, which we treat as not found).
     """
+    # Imported here, not at module level: yfinance pulls in pandas/numpy/
+    # curl_cffi, adding real startup latency to every stox launch even for
+    # a session that never touches fundamentals (e.g. a plain /price check).
+    import yfinance as yf
+
     code = _yahoo_symbol(ticker)
     try:
         info = yf.Ticker(code).info

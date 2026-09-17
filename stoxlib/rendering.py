@@ -154,14 +154,14 @@ def show_analysis(console: Console, result):
     ingested external content (an article's text) -- wrapped in Text()
     rather than markup so it can never be parsed as a Rich style tag.
     """
-    console.print(Panel(Text(result.trend_text), title="trend",
-                         border_style="dim", expand=False))
-    console.print(Panel(Text(result.fundamentals_text), title="fundamentals",
-                         border_style="dim", expand=False))
-    console.print(Panel(Text(result.news_text), title="news",
-                         border_style="dim", expand=False))
-    console.print(Panel(Text(result.verdict_text), title="risk assessment",
-                         border_style="yellow", expand=False))
+    panels = [
+        (result.trend_text, "trend", "dim"),
+        (result.fundamentals_text, "fundamentals", "dim"),
+        (result.news_text, "news", "dim"),
+        (result.verdict_text, "risk assessment", "yellow"),
+    ]
+    for text, title, border_style in panels:
+        console.print(Panel(Text(text), title=title, border_style=border_style, expand=False))
     console.print("[dim]not financial advice -- for research purposes only.[/]")
     console.print()
 

@@ -230,6 +230,27 @@ def _print_tool_call(name, args):
     console.print(Text("  ↳ %s(%s)" % (name, params), style="dim"))
 
 
+def _show_result_data(quotes, bars, fundamentals, articles):
+    """Render whatever a quote/history/fundamentals/news fetch came back
+    with. Shared by handle_query (an AgentResult) and handle_analyze (an
+    AnalysisResult) -- both carry these same four fields, just as
+    different result types, so this takes the values directly rather than
+    one object of either type."""
+    if len(quotes) == 1:
+        show_quote(console, quotes[0])
+    elif quotes:
+        show_quotes_compact(console, quotes)
+
+    if bars:
+        show_price_history(console, bars)
+
+    if fundamentals:
+        show_fundamentals(console, fundamentals)
+
+    if articles:
+        show_news(console, articles)
+
+
 def handle_query(text, history):
     """The natural-language path: hand off to the agent, then render its result.
 
@@ -247,19 +268,7 @@ def handle_query(text, history):
         console.print(Text(result.text))
 
     console.print()
-    if len(result.quotes) == 1:
-        show_quote(console, result.quotes[0])
-    elif result.quotes:
-        show_quotes_compact(console, result.quotes)
-
-    if result.bars:
-        show_price_history(console, result.bars)
-
-    if result.fundamentals:
-        show_fundamentals(console, result.fundamentals)
-
-    if result.articles:
-        show_news(console, result.articles)
+    _show_result_data(result.quotes, result.bars, result.fundamentals, result.articles)
 
     if result.analysis:
         show_analysis(console, result.analysis)
@@ -284,20 +293,7 @@ def handle_analyze(ticker):
         return
 
     console.print()
-    if len(result.quotes) == 1:
-        show_quote(console, result.quotes[0])
-    elif result.quotes:
-        show_quotes_compact(console, result.quotes)
-
-    if result.bars:
-        show_price_history(console, result.bars)
-
-    if result.fundamentals:
-        show_fundamentals(console, result.fundamentals)
-
-    if result.articles:
-        show_news(console, result.articles)
-
+    _show_result_data(result.quotes, result.bars, result.fundamentals, result.articles)
     show_analysis(console, result)
 
 
