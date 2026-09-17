@@ -1,8 +1,13 @@
 """The REPL: reads input, routes it, owns the Console, prints results.
 
 The only module that imports rich for interaction (rendering.py takes a
-Console as a parameter instead of owning one) and the only place that
-decides whether a line is a ticker list or a natural-language question.
+Console as a parameter instead of owning one). Routing here is
+deliberately trivial: a slash command is handled locally, and everything
+else goes to the agent, which decides what the user actually needs (a
+price only, or news/history/fundamentals/a full risk analysis too) --
+that used to be guessed locally with English keyword heuristics, which
+broke for anything not phrased in English. /price is the one local
+shortcut left, for an instant, LLM-free quote lookup.
 """
 
 import atexit
@@ -14,10 +19,12 @@ from rich.panel import Panel
 from rich.text import Text
 
 from . import agent, providers
+from .analysis import run_stock_analysis
 from .config import CONFIG_DIR, load_env
 from .considerations import CONSIDERATIONS_FILE, load_considerations
 from .quotes import QuoteError, api_key, fetch_quotes, normalize
-from .rendering import show_news, show_quote, show_quotes_compact
+from .rendering import (show_analysis, show_fundamentals, show_news,
+                         show_price_history, show_quote, show_quotes_compact)
 
 try:
     import readline
@@ -53,18 +60,25 @@ def _prompt_string(markup_text: str) -> str:
 PROMPT = _prompt_string("[bold cyan]›[/] ")
 
 BANNER = ("[bold]stox[/] · research console\n"
-          "[dim]type tickers (AAPL — or TSLA MSFT NVDA) or ask a question "
-          "· /help · /quit[/]")
+          "[dim]ask about a stock, in any language -- or /price AAPL for "
+          "an instant quote · /help · /quit[/]")
 
 HELP = """[bold]commands[/]
-  <ticker> [...]   fetch quote(s):  AAPL   or   TSLA MSFT NVDA
-  <question>       ask in plain English:  what's apple trading at today?
-                                           any news on tesla?
-                                           always factor in insider selling
-                                           when you explain price moves
-                                           the agent remembers this session --
-                                           follow-ups like "what about its news?"
-                                           and "read that first one in full" work
+  <anything>       ask about a stock, in any language -- the agent decides
+                    what you actually need:
+                      AAPL  or  what's apple trading at?   -> just the price
+                      any news on tesla?                   -> price + news
+                      how has tesla done this month?       -> price history
+                      should I buy apple? / assess the risk -> full /analyze
+                    the agent remembers this session -- follow-ups like
+                    "what about its news?" and "read that first one in
+                    full" work; always factor in insider selling when you
+                    explain price moves also works, to save a standing note
+  /price <ticker> [...]  instant quote(s), no LLM involved:
+                          AAPL   or   TSLA MSFT NVDA
+  /analyze <ticker>  run trend, fundamentals, and news specialist agents for
+                     one ticker, then an aggregator's risk assessment --
+                     4 LLM calls, slower than a plain question
   /help            this message
   /clear           clear the screen
   /reset           forget the conversation so far (also /new)
@@ -82,31 +96,17 @@ HELP = """[bold]commands[/]
 
   EODHD_API_KEY=demo   -> test AAPL.US TSLA.US VTI.US
                           AMZN.US BTC-USD.CC EURUSD.FOREX
-  or a free key from eodhd.com (20 calls/day).
+  or a free key from eodhd.com (20 calls/day). Powers quotes, news, and
+  price history. Fundamentals (EBITDA, margins, ...) are separate -- via
+  Yahoo Finance, free and keyless, no setup needed.
 
-  plain-English questions need an LLM provider:
+  everything except /price needs an LLM provider:
     STOX_LLM_PROVIDER=anthropic|deepseek|openai  (default: anthropic)
     STOX_LLM_MODEL=...     optional, each provider has a default
     ANTHROPIC_API_KEY=...  or DEEPSEEK_API_KEY / OPENAI_API_KEY
 
   standing considerations persist to ~/.config/stox/considerations.txt --
   plain text, one per line, safe to hand-edit or delete."""
-
-_QUERY_HINTS = {
-    "what", "whats", "what's", "is", "are", "the", "of", "how", "much",
-    "price", "stock", "shares", "today", "tell", "me", "show", "give",
-    "about", "does", "do", "doing", "trading", "worth", "current", "for",
-    "news", "headline", "headlines", "latest", "recent", "happening",
-    "update", "updates",
-}
-
-
-def _looks_like_query(text):
-    """True for natural-language questions; false for a bare ticker list."""
-    if "?" in text:
-        return True
-    words = text.lower().split()
-    return any(w.strip(".,!") in _QUERY_HINTS for w in words)
 
 
 def _setup_readline():
@@ -167,27 +167,40 @@ def _show_considerations():
 
 
 def handle_command(cmd, history):
-    cmd = cmd.lower()
-    if cmd in ("/quit", "/exit", "/q"):
+    word, _, rest = cmd.partition(" ")
+    word = word.lower()
+    if word in ("/quit", "/exit", "/q"):
         console.print("[dim]bye.[/]")
         return False
-    if cmd == "/help":
+    if word == "/help":
         console.print(Panel(HELP, border_style="dim", expand=False))
-    elif cmd == "/clear":
+    elif word == "/clear":
         console.clear()
         console.print(Panel(BANNER, border_style="cyan", expand=False))
-    elif cmd in ("/reset", "/new"):
+    elif word in ("/reset", "/new"):
         history.clear()
         console.print("[dim]conversation forgotten -- starting fresh.[/]")
-    elif cmd in ("/considerations", "/remembered"):
+    elif word in ("/considerations", "/remembered"):
         _show_considerations()
+    elif word == "/analyze":
+        ticker = rest.strip().split()[:1]
+        if not ticker:
+            console.print("[red]usage:[/] /analyze <ticker>")
+        else:
+            handle_analyze(ticker[0])
+    elif word == "/price":
+        if not rest.strip():
+            console.print("[red]usage:[/] /price <ticker> [...]")
+        else:
+            handle_tickers(rest)
     else:
-        console.print("[red]unknown command:[/] %s  [dim](try /help)[/]" % cmd)
+        console.print("[red]unknown command:[/] %s  [dim](try /help)[/]" % word)
     return True
 
 
 def handle_tickers(text):
-    """The direct path: text is a bare ticker list, fetch and show it."""
+    """The /price command: text is a bare ticker list, fetch and show it
+    directly -- no LLM involved."""
     tickers = text.split()
     console.print("[dim]→ quote · %s[/]" % ", ".join(normalize(t) for t in tickers))
 
@@ -217,6 +230,27 @@ def _print_tool_call(name, args):
     console.print(Text("  ↳ %s(%s)" % (name, params), style="dim"))
 
 
+def _show_result_data(quotes, bars, fundamentals, articles):
+    """Render whatever a quote/history/fundamentals/news fetch came back
+    with. Shared by handle_query (an AgentResult) and handle_analyze (an
+    AnalysisResult) -- both carry these same four fields, just as
+    different result types, so this takes the values directly rather than
+    one object of either type."""
+    if len(quotes) == 1:
+        show_quote(console, quotes[0])
+    elif quotes:
+        show_quotes_compact(console, quotes)
+
+    if bars:
+        show_price_history(console, bars)
+
+    if fundamentals:
+        show_fundamentals(console, fundamentals)
+
+    if articles:
+        show_news(console, articles)
+
+
 def handle_query(text, history):
     """The natural-language path: hand off to the agent, then render its result.
 
@@ -234,13 +268,33 @@ def handle_query(text, history):
         console.print(Text(result.text))
 
     console.print()
-    if len(result.quotes) == 1:
-        show_quote(console, result.quotes[0])
-    elif result.quotes:
-        show_quotes_compact(console, result.quotes)
+    _show_result_data(result.quotes, result.bars, result.fundamentals, result.articles)
 
-    if result.articles:
-        show_news(console, result.articles)
+    if result.analysis:
+        show_analysis(console, result.analysis)
+
+
+def _print_agent_start(name):
+    """Called by run_stock_analysis right before each specialist starts,
+    for visibility into which stage a slow multi-agent run is on."""
+    console.print(Text("→ %s agent" % name, style="dim"))
+
+
+def handle_analyze(ticker):
+    """The /analyze command: run the full trend/fundamentals/news pipeline
+    and the aggregator's risk assessment for one ticker directly, without
+    going through the general chat agent."""
+    console.print("[dim]→ analyzing %s · this runs 4 LLM calls, please wait[/]" % normalize(ticker))
+    result = run_stock_analysis(ticker, on_agent_start=_print_agent_start,
+                                 on_tool_call=_print_tool_call)
+
+    if result.error:
+        console.print("[red]✗[/] %s" % result.error)
+        return
+
+    console.print()
+    _show_result_data(result.quotes, result.bars, result.fundamentals, result.articles)
+    show_analysis(console, result)
 
 
 def main():
@@ -272,7 +326,5 @@ def main():
         if line.startswith("/"):
             if not handle_command(line, history):
                 break
-        elif _looks_like_query(line):
-            handle_query(line, history)
         else:
-            handle_tickers(line)
+            handle_query(line, history)

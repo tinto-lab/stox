@@ -3,6 +3,8 @@ from unittest.mock import Mock, patch
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from stoxlib import agent, considerations
+from stoxlib.fundamentals import Fundamentals, FundamentalsError
+from stoxlib.history import Bar, HistoryError
 from stoxlib.news import Article, NewsError
 from stoxlib.quotes import Quote, QuoteError
 from stoxlib.webfetch import FetchError
@@ -18,6 +20,21 @@ def _article(title="Apple hits new high"):
     return Article(title=title, date="2026-01-01T12:00:00+00:00",
                     link="https://example.com/a", symbols=["AAPL.US"],
                     sentiment={"polarity": 0.9}, summary="Some summary.")
+
+
+def _bar(code="AAPL.US", date="2026-01-01", close=227.14):
+    return Bar(code=code, date=date, open_=225.0, high=228.0, low=224.5,
+               close=close, volume=50_000_000)
+
+
+def _fundamentals(code="AAPL.US"):
+    return Fundamentals(code=code, name="Apple Inc.", sector="Technology",
+                         industry="Consumer Electronics", market_cap=4.85e12,
+                         pe_ratio=38.03, peg_ratio=2.66, profit_margin=0.2762,
+                         operating_margin=0.3262, roe=1.4875, roa=0.2708,
+                         ebitda=1.68e11, revenue_ttm=4.67e11,
+                         revenue_growth_yoy=0.164, earnings_growth_yoy=0.287,
+                         eps=8.74, dividend_yield=0.0032, analyst_target_price=327.20)
 
 
 def test_run_quote_tool_formats_found_and_missing():
@@ -83,6 +100,77 @@ def test_get_stock_news_tool_returns_text_only():
         result = agent.get_stock_news.invoke({"tickers": ["AAPL"]})
 
     assert "Apple hits new high" in result
+
+
+def test_run_history_tool_summarizes_bars():
+    bars = [_bar(date="2026-01-01", close=220.0), _bar(date="2026-01-31", close=227.14)]
+    with patch("stoxlib.agent.fetch_history", return_value=bars):
+        text, result_bars = agent.run_history_tool("AAPL", days=30)
+
+    assert "AAPL.US" in text
+    assert "start=220.00" in text
+    assert "end=227.14" in text
+    assert "change=+7.14" in text
+    assert result_bars == bars
+
+
+def test_run_history_tool_surfaces_history_error():
+    with patch("stoxlib.agent.fetch_history", side_effect=HistoryError("access denied")):
+        text, bars = agent.run_history_tool("AAPL")
+
+    assert text == "error: access denied"
+    assert bars == []
+
+
+def test_run_history_tool_reports_no_results():
+    with patch("stoxlib.agent.fetch_history", return_value=[]):
+        text, bars = agent.run_history_tool("AAPL")
+
+    assert text == "no historical data found"
+    assert bars == []
+
+
+def test_get_price_history_tool_returns_text_only():
+    with patch("stoxlib.agent.fetch_history", return_value=[_bar()]):
+        result = agent.get_price_history.invoke({"ticker": "AAPL"})
+
+    assert "AAPL.US" in result
+
+
+def test_run_fundamentals_tool_formats_metrics():
+    with patch("stoxlib.agent.fetch_fundamentals", return_value=_fundamentals()):
+        text, f = agent.run_fundamentals_tool("AAPL")
+
+    assert "AAPL.US" in text
+    assert "Apple Inc." in text
+    assert "profit_margin=27.62%" in text
+    assert f == _fundamentals()
+
+
+def test_run_fundamentals_tool_handles_missing_optional_fields():
+    partial = _fundamentals()
+    partial.pe_ratio = None
+    partial.dividend_yield = None
+    with patch("stoxlib.agent.fetch_fundamentals", return_value=partial):
+        text, _ = agent.run_fundamentals_tool("AAPL")
+
+    assert "pe_ratio=NA" in text
+    assert "dividend_yield=NA" in text
+
+
+def test_run_fundamentals_tool_surfaces_fundamentals_error():
+    with patch("stoxlib.agent.fetch_fundamentals", side_effect=FundamentalsError("access denied")):
+        text, f = agent.run_fundamentals_tool("AAPL")
+
+    assert text == "error: access denied"
+    assert f is None
+
+
+def test_get_company_fundamentals_tool_returns_text_only():
+    with patch("stoxlib.agent.fetch_fundamentals", return_value=_fundamentals()):
+        result = agent.get_company_fundamentals.invoke({"ticker": "AAPL"})
+
+    assert "AAPL.US" in result
 
 
 def test_run_read_article_tool_returns_extracted_text():
@@ -225,6 +313,70 @@ def test_ask_agent_executes_news_tool_then_answers():
     assert result.text == "Apple's in the news today."
     assert result.articles == [_article()]
     assert result.quotes == []
+
+
+def test_ask_agent_executes_history_tool_then_answers():
+    llm = _FakeLLM([
+        AIMessage(content="", tool_calls=[
+            {"name": "get_price_history", "args": {"ticker": "AAPL", "days": 30}, "id": "call1"},
+        ]),
+        AIMessage(content="Apple is up over the past month.", tool_calls=[]),
+    ])
+    bars = [_bar(date="2026-01-01", close=220.0), _bar(date="2026-01-31", close=227.14)]
+    with patch("stoxlib.agent.fetch_history", return_value=bars):
+        result = agent.ask_agent("how has apple done over the past month?", llm=llm)
+
+    assert result.error is None
+    assert result.text == "Apple is up over the past month."
+    assert result.bars == bars
+    assert result.quotes == []
+
+
+def test_ask_agent_executes_fundamentals_tool_then_answers():
+    llm = _FakeLLM([
+        AIMessage(content="", tool_calls=[
+            {"name": "get_company_fundamentals", "args": {"ticker": "AAPL"}, "id": "call1"},
+        ]),
+        AIMessage(content="Apple's margins look healthy.", tool_calls=[]),
+    ])
+    with patch("stoxlib.agent.fetch_fundamentals", return_value=_fundamentals()):
+        result = agent.ask_agent("how profitable is apple?", llm=llm)
+
+    assert result.error is None
+    assert result.text == "Apple's margins look healthy."
+    assert result.fundamentals == _fundamentals()
+
+
+def test_ask_agent_executes_analyze_stock_tool_then_answers():
+    """analyze_stock is dispatched straight to run_analyze_stock_tool (not
+    through the @tool-wrapped analyze_stock.invoke), the same way every
+    other tool call in this loop bypasses its own @tool wrapper -- so
+    patching stoxlib.analysis.run_analyze_stock_tool is what actually
+    intercepts it."""
+    from stoxlib.analysis import AnalysisResult
+
+    llm = _FakeLLM([
+        AIMessage(content="", tool_calls=[
+            {"name": "analyze_stock", "args": {"ticker": "AAPL"}, "id": "call1"},
+        ]),
+        AIMessage(content="Here's the risk picture on Apple.", tool_calls=[]),
+    ])
+    fake_result = AnalysisResult(
+        ticker="AAPL", trend_text="up", fundamentals_text="solid",
+        news_text="quiet", verdict_text="low risk, favorable",
+        quotes=[_quote()], bars=[_bar()], articles=[_article()],
+        fundamentals=_fundamentals(),
+    )
+    with patch("stoxlib.analysis.run_analyze_stock_tool", return_value=("...", fake_result)):
+        result = agent.ask_agent("should I buy apple?", llm=llm)
+
+    assert result.error is None
+    assert result.text == "Here's the risk picture on Apple."
+    assert result.analysis is fake_result
+    assert result.quotes == [_quote()]
+    assert result.bars == [_bar()]
+    assert result.articles == [_article()]
+    assert result.fundamentals == _fundamentals()
 
 
 def test_ask_agent_can_call_both_tools_in_one_turn():

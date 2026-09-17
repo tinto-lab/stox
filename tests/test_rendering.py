@@ -4,6 +4,8 @@ import pytest
 from rich.console import Console
 
 from stoxlib import rendering
+from stoxlib.fundamentals import Fundamentals
+from stoxlib.history import Bar
 from stoxlib.news import Article
 from stoxlib.quotes import Quote
 
@@ -16,6 +18,37 @@ def _quote(**overrides):
     )
     defaults.update(overrides)
     return Quote(**defaults)
+
+
+def _bar(**overrides):
+    defaults = dict(
+        code="AAPL.US", date="2026-01-01", open_=225.0, high=228.0,
+        low=224.5, close=227.14, volume=50_000_000,
+    )
+    defaults.update(overrides)
+    return Bar(**defaults)
+
+
+def _fundamentals(**overrides):
+    defaults = dict(
+        code="AAPL.US", name="Apple Inc.", sector="Technology",
+        industry="Consumer Electronics", market_cap=4.85e12, pe_ratio=38.03,
+        peg_ratio=2.66, profit_margin=0.2762, operating_margin=0.3262,
+        roe=1.4875, roa=0.2708, ebitda=1.68e11, revenue_ttm=4.67e11,
+        revenue_growth_yoy=0.164, earnings_growth_yoy=0.287, eps=8.74,
+        dividend_yield=0.0032, analyst_target_price=327.20,
+    )
+    defaults.update(overrides)
+    return Fundamentals(**defaults)
+
+
+class _FakeAnalysisResult:
+    def __init__(self, trend_text="Trending up.", fundamentals_text="Solid margins.",
+                 news_text="Quiet week.", verdict_text="Low risk, favorable lean."):
+        self.trend_text = trend_text
+        self.fundamentals_text = fundamentals_text
+        self.news_text = news_text
+        self.verdict_text = verdict_text
 
 
 def _article(**overrides):
@@ -64,6 +97,56 @@ def test_show_quotes_compact_includes_all_tickers():
     output = console.export_text()
     assert "AAPL.US" in output
     assert "TSLA.US" in output
+
+
+def test_show_price_history_includes_ticker_and_bars():
+    console = _capturing_console()
+    bars = [_bar(date="2026-01-01", close=220.0), _bar(date="2026-01-02", close=227.14)]
+    rendering.show_price_history(console, bars)
+    output = console.export_text()
+    assert "AAPL.US" in output
+    assert "2026-01-01" in output
+    assert "2026-01-02" in output
+    assert "227.14" in output
+
+
+def test_show_price_history_handles_empty_list():
+    console = _capturing_console()
+    rendering.show_price_history(console, [])
+    assert "no historical data" in console.export_text()
+
+
+def test_show_fundamentals_includes_metrics():
+    console = _capturing_console()
+    rendering.show_fundamentals(console, _fundamentals())
+    output = console.export_text()
+    assert "AAPL.US" in output
+    assert "Apple Inc." in output
+    assert "Technology" in output
+    assert "+27.62%" in output  # profit margin
+
+
+def test_show_fundamentals_handles_missing_fields():
+    console = _capturing_console()
+    rendering.show_fundamentals(console, _fundamentals(pe_ratio=None, dividend_yield=None))
+    assert "n/a" in console.export_text()
+
+
+def test_show_analysis_includes_all_four_texts():
+    console = _capturing_console()
+    rendering.show_analysis(console, _FakeAnalysisResult())
+    output = console.export_text()
+    assert "Trending up." in output
+    assert "Solid margins." in output
+    assert "Quiet week." in output
+    assert "Low risk, favorable lean." in output
+    assert "not financial advice" in output
+
+
+def test_show_analysis_does_not_let_verdict_be_parsed_as_markup():
+    console = _capturing_console()
+    rendering.show_analysis(console, _FakeAnalysisResult(verdict_text="[bold red]not a tag[/]"))
+    assert "[bold red]not a tag[/]" in console.export_text()
 
 
 @pytest.mark.parametrize("sentiment, expected_color", [
