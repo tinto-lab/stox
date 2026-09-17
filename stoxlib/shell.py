@@ -16,7 +16,7 @@ from rich.text import Text
 from . import agent, providers
 from .config import CONFIG_DIR, load_env
 from .quotes import QuoteError, api_key, fetch_quotes, normalize
-from .rendering import show_quote, show_quotes_compact
+from .rendering import show_news, show_quote, show_quotes_compact
 
 try:
     import readline
@@ -58,6 +58,7 @@ BANNER = ("[bold]stox[/] · research console\n"
 HELP = """[bold]commands[/]
   <ticker> [...]   fetch quote(s):  AAPL   or   TSLA MSFT NVDA
   <question>       ask in plain English:  what's apple trading at today?
+                                           any news on tesla?
   /help            this message
   /clear           clear the screen
   /quit  /exit     leave
@@ -84,6 +85,8 @@ _QUERY_HINTS = {
     "what", "whats", "what's", "is", "are", "the", "of", "how", "much",
     "price", "stock", "shares", "today", "tell", "me", "show", "give",
     "about", "does", "do", "doing", "trading", "worth", "current", "for",
+    "news", "headline", "headlines", "latest", "recent", "happening",
+    "update", "updates",
 }
 
 
@@ -190,6 +193,9 @@ def handle_query(text):
         show_quote(console, result.quotes[0])
     elif result.quotes:
         show_quotes_compact(console, result.quotes)
+
+    if result.articles:
+        show_news(console, result.articles)
 
 
 def main():

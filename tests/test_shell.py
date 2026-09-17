@@ -7,6 +7,7 @@ from rich.console import Console
 
 from stoxlib import shell
 from stoxlib.agent import AgentResult
+from stoxlib.news import Article
 from stoxlib.quotes import Quote, QuoteError
 
 
@@ -56,6 +57,9 @@ def test_prompt_string_brackets_ansi_codes_for_readline(monkeypatch):
     ("what is the price of apple stock today?", True),
     ("what's apple trading at", True),
     ("how much is tesla worth", True),
+    ("any news on tesla?", True),
+    ("TSLA news", True),
+    ("latest headlines for apple", True),
 ])
 def test_looks_like_query(text, expected):
     assert shell._looks_like_query(text) is expected
@@ -111,6 +115,22 @@ def test_handle_query_reports_error(test_console):
     with patch("stoxlib.agent.ask_agent", return_value=result):
         shell.handle_query("what is apple trading at?")
     assert "no ANTHROPIC_API_KEY set" in test_console.export_text()
+
+
+def _article(title="Apple hits new high"):
+    return Article(title=title, date="2026-01-01T12:00:00+00:00",
+                    link="https://example.com/a", symbols=["AAPL.US"],
+                    sentiment={"polarity": 0.9}, summary="Some summary.")
+
+
+def test_handle_query_shows_news(test_console):
+    result = AgentResult(text="Here's the latest.", articles=[_article()])
+    with patch("stoxlib.agent.ask_agent", return_value=result):
+        shell.handle_query("any news on apple?")
+    output = test_console.export_text()
+    assert "Here's the latest." in output
+    assert "Apple hits new high" in output
+    assert "https://example.com/a" in output
 
 
 def test_main_routes_input_and_stops_on_quit(test_console, monkeypatch):

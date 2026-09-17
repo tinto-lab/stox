@@ -1,10 +1,10 @@
 """Natural-language question handling.
 
-Resolves a plain-English question ("what's apple trading at today?") into
-tool calls against the quote data source via LangChain tool use. Returns
-data (AgentResult), never prints -- shell.py owns all console output, so
-this module has no UI dependency and no reason to change when the console
-formatting does.
+Resolves a plain-English question ("what's apple trading at today?" or
+"any news on tesla?") into tool calls against the quote and news data
+sources via LangChain tool use. Returns data (AgentResult), never prints --
+shell.py owns all console output, so this module has no UI dependency and
+no reason to change when the console formatting does.
 """
 
 from dataclasses import dataclass, field
@@ -12,17 +12,20 @@ from dataclasses import dataclass, field
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 
+from .news import NewsError, fetch_news
 from .providers import AgentError, build_llm
 from .quotes import QuoteError, fetch_quotes
 
 AGENT_SYSTEM = (
-    "You are stox, a terse terminal stock-quote assistant. When the user asks "
-    "about a price, quote, or how a stock/crypto/FX pair is doing, call "
-    "get_stock_quote with the right ticker symbol(s) -- translate company names "
-    "to tickers yourself (Apple -> AAPL, Tesla -> TSLA, Microsoft -> MSFT, ...). "
-    "Answer in one short sentence using the numbers the tool returns. Don't "
-    "repeat the raw tool output verbatim and don't restate a full table -- a "
-    "detailed quote panel is printed to the console right after your answer."
+    "You are stox, a terse terminal research assistant for stocks, crypto, "
+    "and FX. Translate company names to tickers yourself (Apple -> AAPL, "
+    "Tesla -> TSLA, Microsoft -> MSFT, ...). Call get_stock_quote for price "
+    "questions, and get_stock_news for questions about news, headlines, or "
+    "what's going on with a company -- call both if the user asks for both. "
+    "Answer in one or two short sentences using what the tools return. Don't "
+    "repeat raw tool output verbatim and don't restate a full table or "
+    "headline list -- a detailed panel is printed to the console right "
+    "after your answer."
 )
 
 
@@ -30,6 +33,7 @@ AGENT_SYSTEM = (
 class AgentResult:
     text: str = ""
     quotes: list = field(default_factory=list)
+    articles: list = field(default_factory=list)
     error: str | None = None
 
 
@@ -63,6 +67,35 @@ def get_stock_quote(tickers: list[str]) -> str:
     return text
 
 
+def run_news_tool(tickers, limit=5):
+    """Fetch news and render it as tool-result text; also return the Articles."""
+    try:
+        articles = fetch_news(tickers, limit=limit)
+    except NewsError as e:
+        return "error: %s" % e, []
+
+    if not articles:
+        return "no recent news found", []
+
+    lines = [
+        "%s | %s | %s" % ((a.date or "")[:10], a.title, a.summary)
+        for a in articles
+    ]
+    return "\n".join(lines), articles
+
+
+@tool
+def get_stock_news(tickers: list[str], limit: int = 5) -> str:
+    """Look up recent financial news headlines for one or more tickers via EODHD.
+
+    Use this for questions about news, headlines, or what's going on with a
+    company or stock -- separate from its price. Bare symbols default to the
+    US exchange (AAPL, TSLA).
+    """
+    text, _ = run_news_tool(tickers, limit=limit)
+    return text
+
+
 def ask_agent(query, llm=None):
     """Resolve a natural-language query into an AgentResult.
 
@@ -75,9 +108,10 @@ def ask_agent(query, llm=None):
         except AgentError as e:
             return AgentResult(error=str(e))
 
-    llm_with_tools = llm.bind_tools([get_stock_quote])
+    llm_with_tools = llm.bind_tools([get_stock_quote, get_stock_news])
     messages = [SystemMessage(content=AGENT_SYSTEM), HumanMessage(content=query)]
     last_quotes = []
+    last_articles = []
 
     try:
         while True:
@@ -86,12 +120,16 @@ def ask_agent(query, llm=None):
 
             if not ai_msg.tool_calls:
                 text = ai_msg.content if isinstance(ai_msg.content, str) else str(ai_msg.content)
-                return AgentResult(text=text, quotes=last_quotes)
+                return AgentResult(text=text, quotes=last_quotes, articles=last_articles)
 
             for call in ai_msg.tool_calls:
+                args = call["args"]
                 if call["name"] == "get_stock_quote":
-                    result_text, quotes = run_quote_tool(call["args"].get("tickers", []))
+                    result_text, quotes = run_quote_tool(args.get("tickers", []))
                     last_quotes = quotes or last_quotes
+                elif call["name"] == "get_stock_news":
+                    result_text, articles = run_news_tool(args.get("tickers", []), limit=args.get("limit", 5))
+                    last_articles = articles or last_articles
                 else:
                     result_text = "unknown tool"
                 messages.append(ToolMessage(content=result_text, tool_call_id=call["id"]))

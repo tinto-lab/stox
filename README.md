@@ -1,16 +1,17 @@
 # stox
 
-A tiny terminal console for looking up stock, ETF, crypto, and FX prices,
-with a natural-language mode backed by a swappable LLM provider (Anthropic,
-DeepSeek, OpenAI-compatible, ...).
+A tiny terminal console for looking up stock, ETF, crypto, and FX prices —
+plus recent financial news — with a natural-language research mode backed
+by a swappable LLM provider (Anthropic, DeepSeek, OpenAI-compatible, ...).
 
 ## Layout
 
 ```
 stox.py                entry point (`python stox.py`)
 stoxlib/
-  quotes.py            EODHD data source — Quote, fetch_quotes
-  rendering.py         Quote -> rich console output
+  quotes.py            EODHD quotes data source — Quote, fetch_quotes
+  news.py              EODHD news data source — Article, fetch_news
+  rendering.py         Quote/Article -> rich console output
   providers.py         LLM provider registry (STOX_LLM_PROVIDER -> chat model)
   agent.py             natural-language question handling (LangChain tool use)
   config.py            loads .env files so keys don't need `export`ing every time
@@ -96,18 +97,24 @@ Type one or more tickers, or a plain-English question, at the `›` prompt:
 ```
 ›  AAPL
 ›  TSLA MSFT NVDA                       # several at once = one API call
-›  what's apple trading at today?       # routed to the agent
+›  what's apple trading at today?       # routed to the agent, quote lookup
+›  any news on tesla?                   # routed to the agent, news lookup
+›  what's going on with apple and how's it trading?   # agent can call both
 ```
 
 Commands:
 
-| command        | does                                     |
-|----------------|-------------------------------------------|
-| `<ticker> ...` | fetch quote(s)                            |
-| `<question>`   | ask in plain English (needs an LLM key)   |
-| `/help`        | show help                                 |
-| `/clear`       | clear the screen                          |
-| `/quit`        | leave (also `/exit`, Ctrl-D)              |
+| command        | does                                                    |
+|----------------|-----------------------------------------------------------|
+| `<ticker> ...` | fetch quote(s)                                            |
+| `<question>`   | ask in plain English — quotes, news, or both (needs an LLM key) |
+| `/help`        | show help                                                  |
+| `/clear`       | clear the screen                                           |
+| `/quit`        | leave (also `/exit`, Ctrl-D)                               |
+
+News comes from EODHD too (same key as quotes), via the `get_stock_news`
+tool the agent can call alongside `get_stock_quote` — it decides which
+one(s) a question needs.
 
 ### Ticker format
 
@@ -137,9 +144,10 @@ before every test so a developer's own shell exports can't leak in):
 | file                  | covers                                                    |
 |-----------------------|------------------------------------------------------------|
 | `test_quotes.py`      | ticker normalization, EODHD response parsing, HTTP/error handling (mocked) |
-| `test_rendering.py`   | quote formatting (arrows, colors, volume units, panel/table output) |
+| `test_news.py`        | EODHD news parsing/truncation, HTTP/error handling (mocked) |
+| `test_rendering.py`   | quote/news formatting (arrows, colors, volume units, panel/table output) |
 | `test_providers.py`   | provider registry resolution, missing key/package errors  |
-| `test_agent.py`       | the tool-calling loop, using a fake chat model — no LLM calls |
+| `test_agent.py`       | the tool-calling loop (both tools), using a fake chat model — no LLM calls |
 | `test_config.py`      | `.env` load order and precedence vs. real env vars         |
 | `test_shell.py`       | input routing, command handling, the REPL loop (canned input) |
 
@@ -155,5 +163,6 @@ before every test so a developer's own shell exports can't leak in):
 
 - [ ] Confirm live quotes with a real key
 - [ ] Confirm the agent path end-to-end with a real LLM provider key
+- [x] Financial news (EODHD, via the `get_stock_news` agent tool)
 - [ ] Add fundamentals fetch (financials, ratios — also where company names live)
 - [ ] CI (run `pytest` on push)

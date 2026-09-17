@@ -4,6 +4,7 @@ import pytest
 from rich.console import Console
 
 from stoxlib import rendering
+from stoxlib.news import Article
 from stoxlib.quotes import Quote
 
 
@@ -15,6 +16,16 @@ def _quote(**overrides):
     )
     defaults.update(overrides)
     return Quote(**defaults)
+
+
+def _article(**overrides):
+    defaults = dict(
+        title="Apple hits new high", date="2026-01-01T12:00:00+00:00",
+        link="https://example.com/a", symbols=["AAPL.US"],
+        sentiment={"polarity": 0.9}, summary="Some summary.",
+    )
+    defaults.update(overrides)
+    return Article(**defaults)
 
 
 @pytest.mark.parametrize("change, expected_color", [(1.0, "green"), (-1.0, "red"), (0.0, "white")])
@@ -53,3 +64,39 @@ def test_show_quotes_compact_includes_all_tickers():
     output = console.export_text()
     assert "AAPL.US" in output
     assert "TSLA.US" in output
+
+
+@pytest.mark.parametrize("sentiment, expected_color", [
+    ({"polarity": 0.5}, "green"),
+    ({"polarity": -0.5}, "red"),
+    ({"polarity": 0.0}, "white"),
+    ({}, "white"),
+    (None, "white"),
+])
+def test_sentiment_arrow(sentiment, expected_color):
+    _, color = rendering._sentiment_arrow(sentiment)
+    assert color == expected_color
+
+
+def test_show_news_lists_title_and_link():
+    console = _capturing_console()
+    rendering.show_news(console, [_article()])
+    output = console.export_text()
+    assert "Apple hits new high" in output
+    assert "https://example.com/a" in output
+    assert "2026-01-01" in output
+
+
+def test_show_news_handles_empty_list():
+    console = _capturing_console()
+    rendering.show_news(console, [])
+    assert "no recent news" in console.export_text()
+
+
+def test_show_news_does_not_let_title_be_parsed_as_markup():
+    """Titles are external content -- a stray '[' must render literally,
+    never be interpreted as a Rich style tag."""
+    console = _capturing_console()
+    rendering.show_news(console, [_article(title="[bold red]not a style tag[/]")])
+    output = console.export_text()
+    assert "[bold red]not a style tag[/]" in output
