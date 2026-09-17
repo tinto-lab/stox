@@ -1,4 +1,5 @@
 import io
+import re
 from unittest.mock import patch
 
 import pytest
@@ -21,6 +22,31 @@ def _quote(code="AAPL.US"):
     return Quote(code=code, price=227.14, change=3.04, percent=1.36,
                  open_=225.0, high=228.0, low=224.5, prev_close=224.10,
                  volume=50_000_000)
+
+
+def test_prompt_string_brackets_ansi_codes_for_readline(monkeypatch):
+    """Regression test for a real line-editing bug: an unbracketed ANSI
+    prompt made readline miscount the prompt's on-screen width, which let
+    word-delete eat into the prompt and broke cursor movement (couldn't
+    get back to end-of-line after jumping to the start). Every escape
+    sequence in the prompt must be wrapped in \\001 ... \\002 so readline
+    knows those bytes are invisible."""
+    colored_console = Console(file=io.StringIO(), force_terminal=True, color_system="standard")
+    monkeypatch.setattr(shell, "console", colored_console)
+
+    prompt = shell._prompt_string("[bold cyan]›[/] ")
+
+    assert "\x1b[" in prompt  # sanity: color codes were actually emitted
+    assert "›" in prompt
+
+    for m in re.finditer(r"\x1b\[[0-9;]*m", prompt):
+        start, end = m.span()
+        assert prompt[start - 1] == "\x01", "escape sequence missing RL_PROMPT_START_IGNORE"
+        assert prompt[end] == "\x02", "escape sequence missing RL_PROMPT_END_IGNORE"
+
+    # the visible arrow itself must NOT be swallowed inside a \x01..\x02 span
+    visible_index = prompt.index("›")
+    assert prompt[visible_index - 1] != "\x01"
 
 
 @pytest.mark.parametrize("text, expected", [
@@ -94,7 +120,7 @@ def test_main_routes_input_and_stops_on_quit(test_console, monkeypatch):
     monkeypatch.setattr(shell, "_setup_readline", lambda: None)
 
     inputs = iter(["AAPL", "what is apple trading at?", "/quit"])
-    monkeypatch.setattr(shell.console, "input", lambda *_args, **_kwargs: next(inputs))
+    monkeypatch.setattr(shell, "input", lambda *_args, **_kwargs: next(inputs), raising=False)
 
     calls = []
     monkeypatch.setattr(shell, "handle_tickers", lambda text: calls.append(("tickers", text)))
@@ -115,7 +141,7 @@ def test_main_stops_cleanly_on_eof(test_console, monkeypatch):
     def _raise_eof(*_args, **_kwargs):
         raise EOFError
 
-    monkeypatch.setattr(shell.console, "input", _raise_eof)
+    monkeypatch.setattr(shell, "input", _raise_eof, raising=False)
 
     shell.main()  # should return, not raise
     assert "bye" in test_console.export_text()

@@ -7,6 +7,7 @@ decides whether a line is a ticker list or a natural-language question.
 
 import atexit
 import os
+import re
 
 from rich.console import Console
 from rich.panel import Panel
@@ -25,6 +26,30 @@ except ImportError:
 console = Console()
 
 HISTORY_FILE = CONFIG_DIR / "history"
+
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _prompt_string(markup_text: str) -> str:
+    """Render Rich markup to a raw-ANSI string safe to use as a readline prompt.
+
+    Readline (GNU readline and macOS's libedit both) needs to know which
+    bytes in the prompt are invisible color codes so it can compute the
+    prompt's true on-screen width. Without that bracketing, its cursor
+    math is wrong for the *entire* line, not just at the prompt boundary:
+    a word-delete can eat into the prompt text, and after jumping to the
+    start of the line the cursor can't reliably find its way back to the
+    true end. The fix is the documented readline convention: wrap each
+    invisible escape sequence in \\001 (RL_PROMPT_START_IGNORE) / \\002
+    (RL_PROMPT_END_IGNORE).
+    """
+    with console.capture() as capture:
+        console.print(markup_text, end="")
+    rendered = capture.get()
+    return _ANSI_ESCAPE_RE.sub(lambda m: "\001" + m.group(0) + "\002", rendered)
+
+
+PROMPT = _prompt_string("[bold cyan]›[/] ")
 
 BANNER = ("[bold]stox[/] · research console\n"
           "[dim]type tickers (AAPL — or TSLA MSFT NVDA) or ask a question "
@@ -185,7 +210,7 @@ def main():
 
     while True:
         try:
-            line = console.input("[bold cyan]›[/] ").strip()
+            line = input(PROMPT).strip()
         except (EOFError, KeyboardInterrupt):
             console.print("\n[dim]bye.[/]")
             break
