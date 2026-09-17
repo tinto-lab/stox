@@ -5,6 +5,7 @@ touch the others:
 
     quotes.py      the EODHD data source (Quote, fetch_quotes)
     news.py        the EODHD news data source (Article, fetch_news)
+    webfetch.py    fetches a url and extracts readable article text
     rendering.py   turns Quotes/Articles into rich console output
     providers.py   LLM provider registry (Anthropic / DeepSeek / OpenAI / ...)
     agent.py       natural-language question handling via LangChain tool use

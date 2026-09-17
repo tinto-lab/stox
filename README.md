@@ -11,6 +11,7 @@ stox.py                entry point (`python stox.py`)
 stoxlib/
   quotes.py            EODHD quotes data source — Quote, fetch_quotes
   news.py              EODHD news data source — Article, fetch_news
+  webfetch.py          fetches a url and extracts its readable article text
   rendering.py         Quote/Article -> rich console output
   providers.py         LLM provider registry (STOX_LLM_PROVIDER -> chat model)
   agent.py             natural-language question handling (LangChain tool use)
@@ -114,7 +115,12 @@ Commands:
 
 News comes from EODHD too (same key as quotes), via the `get_stock_news`
 tool the agent can call alongside `get_stock_quote` — it decides which
-one(s) a question needs.
+one(s) a question needs. `get_stock_news` only returns a short summary
+of each article; when that's not enough (e.g. "what does the article say
+about the deal terms?"), the agent can call a third tool, `read_article`,
+to fetch and read one article's full text — but only for a url that
+`get_stock_news` actually returned in that conversation, never an
+arbitrary url, so the model can't direct stox to fetch anything else.
 
 ### Ticker format
 
@@ -145,9 +151,10 @@ before every test so a developer's own shell exports can't leak in):
 |-----------------------|------------------------------------------------------------|
 | `test_quotes.py`      | ticker normalization, EODHD response parsing, HTTP/error handling (mocked) |
 | `test_news.py`        | EODHD news parsing/truncation, HTTP/error handling (mocked) |
+| `test_webfetch.py`    | article text extraction, HTTP/error handling (mocked) |
 | `test_rendering.py`   | quote/news formatting (arrows, colors, volume units, panel/table output) |
 | `test_providers.py`   | provider registry resolution, missing key/package errors  |
-| `test_agent.py`       | the tool-calling loop (both tools), using a fake chat model — no LLM calls |
+| `test_agent.py`       | the tool-calling loop (all three tools) and the read_article url allow-list, using a fake chat model — no LLM calls |
 | `test_config.py`      | `.env` load order and precedence vs. real env vars         |
 | `test_shell.py`       | input routing, command handling, the REPL loop (canned input) |
 
@@ -164,5 +171,6 @@ before every test so a developer's own shell exports can't leak in):
 - [ ] Confirm live quotes with a real key
 - [ ] Confirm the agent path end-to-end with a real LLM provider key
 - [x] Financial news (EODHD, via the `get_stock_news` agent tool)
+- [x] Full-article reading when a news summary isn't enough (`read_article`)
 - [ ] Add fundamentals fetch (financials, ratios — also where company names live)
 - [ ] CI (run `pytest` on push)

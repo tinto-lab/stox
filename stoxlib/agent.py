@@ -15,6 +15,7 @@ from langchain_core.tools import tool
 from .news import NewsError, fetch_news
 from .providers import AgentError, build_llm
 from .quotes import QuoteError, fetch_quotes
+from .webfetch import FetchError, fetch_article_text
 
 AGENT_SYSTEM = (
     "You are stox, a terse terminal research assistant for stocks, crypto, "
@@ -22,10 +23,15 @@ AGENT_SYSTEM = (
     "Tesla -> TSLA, Microsoft -> MSFT, ...). Call get_stock_quote for price "
     "questions, and get_stock_news for questions about news, headlines, or "
     "what's going on with a company -- call both if the user asks for both. "
-    "Answer in one or two short sentences using what the tools return. Don't "
-    "repeat raw tool output verbatim and don't restate a full table or "
-    "headline list -- a detailed panel is printed to the console right "
-    "after your answer."
+    "get_stock_news only returns a short summary of each article; if that "
+    "isn't enough to answer the question (you need a specific number, deal "
+    "term, or other detail it doesn't cover), call read_article with the "
+    "exact url of the most relevant article from get_stock_news's results "
+    "to read its full text -- you can only read urls that came from "
+    "get_stock_news, not urls from anywhere else. Answer in one or two "
+    "short sentences using what the tools return. Don't repeat raw tool "
+    "output verbatim and don't restate a full table or headline list -- a "
+    "detailed panel is printed to the console right after your answer."
 )
 
 
@@ -77,11 +83,13 @@ def run_news_tool(tickers, limit=5):
     if not articles:
         return "no recent news found", []
 
-    lines = [
-        "%s | %s | %s" % ((a.date or "")[:10], a.title, a.summary)
+    blocks = [
+        "date: %s\ntitle: %s\nurl: %s\nsummary: %s" % (
+            (a.date or "")[:10], a.title, a.link, a.summary,
+        )
         for a in articles
     ]
-    return "\n".join(lines), articles
+    return "\n---\n".join(blocks), articles
 
 
 @tool
@@ -96,6 +104,25 @@ def get_stock_news(tickers: list[str], limit: int = 5) -> str:
     return text
 
 
+def run_read_article_tool(url):
+    """Fetch and extract an article's full readable text as tool-result text."""
+    try:
+        return fetch_article_text(url)
+    except FetchError as e:
+        return "error: %s" % e
+
+
+@tool
+def read_article(url: str) -> str:
+    """Read the full text of one news article, given its exact url.
+
+    Only call this with a url that get_stock_news already returned in this
+    conversation -- use it when that article's short summary doesn't cover
+    what the question needs.
+    """
+    return run_read_article_tool(url)
+
+
 def ask_agent(query, llm=None):
     """Resolve a natural-language query into an AgentResult.
 
@@ -108,10 +135,13 @@ def ask_agent(query, llm=None):
         except AgentError as e:
             return AgentResult(error=str(e))
 
-    llm_with_tools = llm.bind_tools([get_stock_quote, get_stock_news])
+    llm_with_tools = llm.bind_tools([get_stock_quote, get_stock_news, read_article])
     messages = [SystemMessage(content=AGENT_SYSTEM), HumanMessage(content=query)]
     last_quotes = []
     last_articles = []
+    # Only urls that get_stock_news actually returned in this conversation
+    # may be read -- the model can't direct us to fetch an arbitrary url.
+    known_article_urls = set()
 
     try:
         while True:
@@ -130,6 +160,13 @@ def ask_agent(query, llm=None):
                 elif call["name"] == "get_stock_news":
                     result_text, articles = run_news_tool(args.get("tickers", []), limit=args.get("limit", 5))
                     last_articles = articles or last_articles
+                    known_article_urls.update(a.link for a in articles if a.link)
+                elif call["name"] == "read_article":
+                    url = args.get("url", "")
+                    if url not in known_article_urls:
+                        result_text = "error: url must be one get_stock_news returned in this conversation"
+                    else:
+                        result_text = run_read_article_tool(url)
                 else:
                     result_text = "unknown tool"
                 messages.append(ToolMessage(content=result_text, tool_call_id=call["id"]))
