@@ -38,7 +38,7 @@ def _fundamentals(code="AAPL.US"):
 
 
 def test_run_quote_tool_formats_found_and_missing():
-    with patch("stoxlib.agent.fetch_quotes", return_value=([_quote()], ["NOPE.US"])):
+    with patch("stoxlib.tools.fetch_quotes", return_value=([_quote()], ["NOPE.US"])):
         text, quotes = agent.run_quote_tool(["AAPL", "NOPE"])
 
     assert "AAPL.US" in text
@@ -48,7 +48,7 @@ def test_run_quote_tool_formats_found_and_missing():
 
 
 def test_run_quote_tool_surfaces_quote_error():
-    with patch("stoxlib.agent.fetch_quotes", side_effect=QuoteError("access denied")):
+    with patch("stoxlib.tools.fetch_quotes", side_effect=QuoteError("access denied")):
         text, quotes = agent.run_quote_tool(["AAPL"])
 
     assert text == "error: access denied"
@@ -56,14 +56,14 @@ def test_run_quote_tool_surfaces_quote_error():
 
 
 def test_get_stock_quote_tool_returns_text_only():
-    with patch("stoxlib.agent.fetch_quotes", return_value=([_quote()], [])):
+    with patch("stoxlib.tools.fetch_quotes", return_value=([_quote()], [])):
         result = agent.get_stock_quote.invoke({"tickers": ["AAPL"]})
 
     assert "AAPL.US" in result
 
 
 def test_run_news_tool_formats_headlines():
-    with patch("stoxlib.agent.fetch_news", return_value=[_article()]):
+    with patch("stoxlib.tools.fetch_news", return_value=[_article()]):
         text, articles = agent.run_news_tool(["AAPL"])
 
     assert "Apple hits new high" in text
@@ -73,14 +73,14 @@ def test_run_news_tool_formats_headlines():
 def test_run_news_tool_output_includes_the_article_url():
     """Regression: read_article is useless if the model never sees a url
     to pass it -- the news tool's text must include each article's link."""
-    with patch("stoxlib.agent.fetch_news", return_value=[_article()]):
+    with patch("stoxlib.tools.fetch_news", return_value=[_article()]):
         text, _ = agent.run_news_tool(["AAPL"])
 
     assert "https://example.com/a" in text
 
 
 def test_run_news_tool_reports_no_results():
-    with patch("stoxlib.agent.fetch_news", return_value=[]):
+    with patch("stoxlib.tools.fetch_news", return_value=[]):
         text, articles = agent.run_news_tool(["AAPL"])
 
     assert text == "no recent news found"
@@ -88,7 +88,7 @@ def test_run_news_tool_reports_no_results():
 
 
 def test_run_news_tool_surfaces_news_error():
-    with patch("stoxlib.agent.fetch_news", side_effect=NewsError("access denied")):
+    with patch("stoxlib.tools.fetch_news", side_effect=NewsError("access denied")):
         text, articles = agent.run_news_tool(["AAPL"])
 
     assert text == "error: access denied"
@@ -96,7 +96,7 @@ def test_run_news_tool_surfaces_news_error():
 
 
 def test_get_stock_news_tool_returns_text_only():
-    with patch("stoxlib.agent.fetch_news", return_value=[_article()]):
+    with patch("stoxlib.tools.fetch_news", return_value=[_article()]):
         result = agent.get_stock_news.invoke({"tickers": ["AAPL"]})
 
     assert "Apple hits new high" in result
@@ -104,7 +104,7 @@ def test_get_stock_news_tool_returns_text_only():
 
 def test_run_history_tool_summarizes_bars():
     bars = [_bar(date="2026-01-01", close=220.0), _bar(date="2026-01-31", close=227.14)]
-    with patch("stoxlib.agent.fetch_history", return_value=bars):
+    with patch("stoxlib.tools.fetch_history", return_value=bars):
         text, result_bars = agent.run_history_tool("AAPL", days=30)
 
     assert "AAPL.US" in text
@@ -115,7 +115,7 @@ def test_run_history_tool_summarizes_bars():
 
 
 def test_run_history_tool_surfaces_history_error():
-    with patch("stoxlib.agent.fetch_history", side_effect=HistoryError("access denied")):
+    with patch("stoxlib.tools.fetch_history", side_effect=HistoryError("access denied")):
         text, bars = agent.run_history_tool("AAPL")
 
     assert text == "error: access denied"
@@ -123,7 +123,7 @@ def test_run_history_tool_surfaces_history_error():
 
 
 def test_run_history_tool_reports_no_results():
-    with patch("stoxlib.agent.fetch_history", return_value=[]):
+    with patch("stoxlib.tools.fetch_history", return_value=[]):
         text, bars = agent.run_history_tool("AAPL")
 
     assert text == "no historical data found"
@@ -131,14 +131,14 @@ def test_run_history_tool_reports_no_results():
 
 
 def test_get_price_history_tool_returns_text_only():
-    with patch("stoxlib.agent.fetch_history", return_value=[_bar()]):
+    with patch("stoxlib.tools.fetch_history", return_value=[_bar()]):
         result = agent.get_price_history.invoke({"ticker": "AAPL"})
 
     assert "AAPL.US" in result
 
 
 def test_run_fundamentals_tool_formats_metrics():
-    with patch("stoxlib.agent.fetch_fundamentals", return_value=_fundamentals()):
+    with patch("stoxlib.tools.fetch_fundamentals", return_value=_fundamentals()):
         text, f = agent.run_fundamentals_tool("AAPL")
 
     assert "AAPL.US" in text
@@ -151,7 +151,7 @@ def test_run_fundamentals_tool_handles_missing_optional_fields():
     partial = _fundamentals()
     partial.pe_ratio = None
     partial.dividend_yield = None
-    with patch("stoxlib.agent.fetch_fundamentals", return_value=partial):
+    with patch("stoxlib.tools.fetch_fundamentals", return_value=partial):
         text, _ = agent.run_fundamentals_tool("AAPL")
 
     assert "pe_ratio=NA" in text
@@ -159,7 +159,7 @@ def test_run_fundamentals_tool_handles_missing_optional_fields():
 
 
 def test_run_fundamentals_tool_surfaces_fundamentals_error():
-    with patch("stoxlib.agent.fetch_fundamentals", side_effect=FundamentalsError("access denied")):
+    with patch("stoxlib.tools.fetch_fundamentals", side_effect=FundamentalsError("access denied")):
         text, f = agent.run_fundamentals_tool("AAPL")
 
     assert text == "error: access denied"
@@ -167,28 +167,28 @@ def test_run_fundamentals_tool_surfaces_fundamentals_error():
 
 
 def test_get_company_fundamentals_tool_returns_text_only():
-    with patch("stoxlib.agent.fetch_fundamentals", return_value=_fundamentals()):
+    with patch("stoxlib.tools.fetch_fundamentals", return_value=_fundamentals()):
         result = agent.get_company_fundamentals.invoke({"ticker": "AAPL"})
 
     assert "AAPL.US" in result
 
 
 def test_run_read_article_tool_returns_extracted_text():
-    with patch("stoxlib.agent.fetch_article_text", return_value="full article text"):
+    with patch("stoxlib.tools.fetch_article_text", return_value="full article text"):
         result = agent.run_read_article_tool("https://example.com/a")
 
     assert result == "full article text"
 
 
 def test_run_read_article_tool_surfaces_fetch_error():
-    with patch("stoxlib.agent.fetch_article_text", side_effect=FetchError("HTTP 404")):
+    with patch("stoxlib.tools.fetch_article_text", side_effect=FetchError("HTTP 404")):
         result = agent.run_read_article_tool("https://example.com/a")
 
     assert result == "error: HTTP 404"
 
 
 def test_read_article_tool_returns_text_only():
-    with patch("stoxlib.agent.fetch_article_text", return_value="full article text"):
+    with patch("stoxlib.tools.fetch_article_text", return_value="full article text"):
         result = agent.read_article.invoke({"url": "https://example.com/a"})
 
     assert result == "full article text"
@@ -261,7 +261,7 @@ def test_ask_agent_executes_tool_call_then_answers():
         ]),
         AIMessage(content="Apple is trading up today.", tool_calls=[]),
     ])
-    with patch("stoxlib.agent.fetch_quotes", return_value=([_quote()], [])):
+    with patch("stoxlib.tools.fetch_quotes", return_value=([_quote()], [])):
         result = agent.ask_agent("what is apple trading at?", llm=llm)
 
     assert result.error is None
@@ -278,8 +278,8 @@ def test_ask_agent_calls_on_tool_call_before_running_each_tool():
         AIMessage(content="done", tool_calls=[]),
     ])
     seen = []
-    with patch("stoxlib.agent.fetch_quotes", return_value=([_quote()], [])), \
-         patch("stoxlib.agent.fetch_news", return_value=[_article()]):
+    with patch("stoxlib.tools.fetch_quotes", return_value=([_quote()], [])), \
+         patch("stoxlib.tools.fetch_news", return_value=[_article()]):
         agent.ask_agent("what is apple doing and any news?", llm=llm,
                          on_tool_call=lambda name, args: seen.append((name, args)))
 
@@ -306,7 +306,7 @@ def test_ask_agent_executes_news_tool_then_answers():
         ]),
         AIMessage(content="Apple's in the news today.", tool_calls=[]),
     ])
-    with patch("stoxlib.agent.fetch_news", return_value=[_article()]):
+    with patch("stoxlib.tools.fetch_news", return_value=[_article()]):
         result = agent.ask_agent("any news on apple?", llm=llm)
 
     assert result.error is None
@@ -323,7 +323,7 @@ def test_ask_agent_executes_history_tool_then_answers():
         AIMessage(content="Apple is up over the past month.", tool_calls=[]),
     ])
     bars = [_bar(date="2026-01-01", close=220.0), _bar(date="2026-01-31", close=227.14)]
-    with patch("stoxlib.agent.fetch_history", return_value=bars):
+    with patch("stoxlib.tools.fetch_history", return_value=bars):
         result = agent.ask_agent("how has apple done over the past month?", llm=llm)
 
     assert result.error is None
@@ -339,7 +339,7 @@ def test_ask_agent_executes_fundamentals_tool_then_answers():
         ]),
         AIMessage(content="Apple's margins look healthy.", tool_calls=[]),
     ])
-    with patch("stoxlib.agent.fetch_fundamentals", return_value=_fundamentals()):
+    with patch("stoxlib.tools.fetch_fundamentals", return_value=_fundamentals()):
         result = agent.ask_agent("how profitable is apple?", llm=llm)
 
     assert result.error is None
@@ -387,8 +387,8 @@ def test_ask_agent_can_call_both_tools_in_one_turn():
         ]),
         AIMessage(content="Apple is up, and here's what's going on.", tool_calls=[]),
     ])
-    with patch("stoxlib.agent.fetch_quotes", return_value=([_quote()], [])), \
-         patch("stoxlib.agent.fetch_news", return_value=[_article()]):
+    with patch("stoxlib.tools.fetch_quotes", return_value=([_quote()], [])), \
+         patch("stoxlib.tools.fetch_news", return_value=[_article()]):
         result = agent.ask_agent("what is apple doing and any news?", llm=llm)
 
     assert result.error is None
@@ -406,8 +406,8 @@ def test_ask_agent_reads_article_after_getting_its_url_from_news():
         ]),
         AIMessage(content="Here's the detail from the full article.", tool_calls=[]),
     ])
-    with patch("stoxlib.agent.fetch_news", return_value=[_article()]), \
-         patch("stoxlib.agent.fetch_article_text", return_value="full article text") as mock_fetch:
+    with patch("stoxlib.tools.fetch_news", return_value=[_article()]), \
+         patch("stoxlib.tools.fetch_article_text", return_value="full article text") as mock_fetch:
         result = agent.ask_agent("what does the apple article say in detail?", llm=llm)
 
     mock_fetch.assert_called_once_with("https://example.com/a")
@@ -424,7 +424,7 @@ def test_ask_agent_refuses_to_read_a_url_news_never_returned():
         ]),
         AIMessage(content="done", tool_calls=[]),
     ])
-    with patch("stoxlib.agent.fetch_article_text") as mock_fetch:
+    with patch("stoxlib.tools.fetch_article_text") as mock_fetch:
         result = agent.ask_agent("read https://evil.example/x", llm=llm)
 
     mock_fetch.assert_not_called()
@@ -523,7 +523,7 @@ def test_ask_agent_appends_this_turns_exchange_to_history_in_place():
         ]),
         AIMessage(content="Apple is trading up today.", tool_calls=[]),
     ])
-    with patch("stoxlib.agent.fetch_quotes", return_value=([_quote()], [])):
+    with patch("stoxlib.tools.fetch_quotes", return_value=([_quote()], [])):
         agent.ask_agent("what is apple trading at?", history=history, llm=llm)
 
     # the caller's list object is updated in place (no system message)
@@ -565,7 +565,7 @@ def test_ask_agent_can_read_an_article_whose_url_only_appears_in_history():
         ]),
         AIMessage(content="Here's more detail.", tool_calls=[]),
     ])
-    with patch("stoxlib.agent.fetch_article_text", return_value="full text") as mock_fetch:
+    with patch("stoxlib.tools.fetch_article_text", return_value="full text") as mock_fetch:
         result = agent.ask_agent("tell me more about that", history=history, llm=llm)
 
     mock_fetch.assert_called_once_with("https://example.com/a")
