@@ -7,14 +7,17 @@ DeepSeek, OpenAI-compatible, ...).
 ## Layout
 
 ```
-stox.py           entry point (`python stox.py`)
+stox.py                entry point (`python stox.py`)
 stoxlib/
-  quotes.py       EODHD data source — Quote, fetch_quotes
-  rendering.py    Quote -> rich console output
-  providers.py    LLM provider registry (STOX_LLM_PROVIDER -> chat model)
-  agent.py        natural-language question handling (LangChain tool use)
-  config.py       loads .env files so keys don't need `export`ing every time
-  shell.py        the REPL — routes input, owns the Console, line editing
+  quotes.py            EODHD data source — Quote, fetch_quotes
+  rendering.py         Quote -> rich console output
+  providers.py         LLM provider registry (STOX_LLM_PROVIDER -> chat model)
+  agent.py             natural-language question handling (LangChain tool use)
+  config.py            loads .env files so keys don't need `export`ing every time
+  shell.py             the REPL — routes input, owns the Console, line editing
+tests/                 pytest suite, one file per stoxlib module (see Testing)
+requirements.txt       pinned runtime dependencies
+requirements-dev.txt   requirements.txt + pytest
 ```
 
 Each module has one job; see `stoxlib/__init__.py` for the short version.
@@ -35,15 +38,16 @@ pyenv local 3.12
 
 python -m venv .venv          # create the virtual environment (one time)
 source .venv/bin/activate     # activate it (each new terminal session)
-pip install rich requests langchain-core python-dotenv   # core deps
-pip install langchain-anthropic              # STOX_LLM_PROVIDER=anthropic (default)
-pip install langchain-deepseek               # STOX_LLM_PROVIDER=deepseek
-pip install langchain-openai                 # STOX_LLM_PROVIDER=openai (or compatible)
+pip install -r requirements.txt        # just to run it
+pip install -r requirements-dev.txt    # to also run the test suite
 ```
 
 You'll know the venv is active when your prompt shows `(.venv)` and
 `which python` points at `.venv/bin/python`. Run `deactivate` to leave it.
-Only install the LangChain provider package(s) you'll actually use.
+
+`requirements.txt` covers all three LLM providers (Anthropic, DeepSeek,
+OpenAI) so nothing extra needs installing no matter which `STOX_LLM_PROVIDER`
+you pick — only the one you actually use gets imported at runtime.
 
 ## Running it
 
@@ -119,6 +123,26 @@ EODHD uses `SYMBOL.EXCHANGE`. A bare symbol defaults to `.US`:
 The `demo` key works only for: `AAPL.US`, `TSLA.US`, `VTI.US`, `AMZN.US`,
 `BTC-USD.CC`, `EURUSD.FOREX`.
 
+## Testing
+
+```bash
+pip install -r requirements-dev.txt   # one time
+pytest                                 # runs everything under tests/
+```
+
+The suite covers each `stoxlib` module in isolation — no real network calls,
+no real API keys needed (`tests/conftest.py` strips stox-related env vars
+before every test so a developer's own shell exports can't leak in):
+
+| file                  | covers                                                    |
+|-----------------------|------------------------------------------------------------|
+| `test_quotes.py`      | ticker normalization, EODHD response parsing, HTTP/error handling (mocked) |
+| `test_rendering.py`   | quote formatting (arrows, colors, volume units, panel/table output) |
+| `test_providers.py`   | provider registry resolution, missing key/package errors  |
+| `test_agent.py`       | the tool-calling loop, using a fake chat model — no LLM calls |
+| `test_config.py`      | `.env` load order and precedence vs. real env vars         |
+| `test_shell.py`       | input routing, command handling, the REPL loop (canned input) |
+
 ## Notes
 
 - **Free tier = 20 API calls/day.** Batching multiple tickers into one
@@ -132,3 +156,4 @@ The `demo` key works only for: `AAPL.US`, `TSLA.US`, `VTI.US`, `AMZN.US`,
 - [ ] Confirm live quotes with a real key
 - [ ] Confirm the agent path end-to-end with a real LLM provider key
 - [ ] Add fundamentals fetch (financials, ratios — also where company names live)
+- [ ] CI (run `pytest` on push)
