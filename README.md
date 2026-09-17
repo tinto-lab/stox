@@ -124,6 +124,16 @@ to fetch and read one article's full text — but only for a url that
 `get_stock_news` actually returned in that conversation, never an
 arbitrary url, so the model can't direct stox to fetch anything else.
 
+Every tool call the model actually makes is printed before its result, so
+it's never a black box which of the three tools ran:
+
+```
+› any news on tesla?
+→ agent (anthropic/claude-opus-5) · any news on tesla?
+  ↳ get_stock_news(tickers=['TSLA'], limit=5)
+Tesla has a couple of headlines today.
+```
+
 ### Conversation memory
 
 The agent remembers the current session: follow-ups like "what about its

@@ -139,6 +139,59 @@ def test_handle_query_passes_the_same_history_object_to_the_agent(test_console):
     assert mock_ask.call_args.kwargs["history"] is history
 
 
+def test_handle_query_passes_the_tool_call_callback_to_the_agent():
+    result = AgentResult(text="ok")
+    with patch("stoxlib.agent.ask_agent", return_value=result) as mock_ask:
+        shell.handle_query("any news on apple?", [])
+    assert mock_ask.call_args.kwargs["on_tool_call"] is shell._print_tool_call
+
+
+def test_print_tool_call_shows_name_and_args(test_console):
+    shell._print_tool_call("get_stock_news", {"tickers": ["TSLA"], "limit": 5})
+    output = test_console.export_text()
+    assert "get_stock_news" in output
+    assert "TSLA" in output
+
+
+def test_print_tool_call_does_not_let_args_be_parsed_as_markup(test_console):
+    """Args trace back through the model, which may have ingested external
+    content -- a stray '[' must render literally, not as a style tag."""
+    shell._print_tool_call("read_article", {"url": "[bold red]not a style tag[/]"})
+    output = test_console.export_text()
+    assert "[bold red]not a style tag[/]" in output
+
+
+def test_handle_query_shows_tool_calls_end_to_end(test_console):
+    """Full path through ask_agent (not mocked) with a fake LLM, proving a
+    tool call the model makes is actually visible to the user."""
+    from langchain_core.messages import AIMessage
+
+    class _FakeLLM:
+        def __init__(self, responses):
+            self._responses = list(responses)
+
+        def bind_tools(self, tools):
+            return self
+
+        def invoke(self, messages):
+            return self._responses.pop(0)
+
+    llm = _FakeLLM([
+        AIMessage(content="", tool_calls=[
+            {"name": "get_stock_news", "args": {"tickers": ["TSLA"], "limit": 3}, "id": "call1"},
+        ]),
+        AIMessage(content="Tesla has some news today.", tool_calls=[]),
+    ])
+    with patch("stoxlib.agent.build_llm", return_value=llm), \
+         patch("stoxlib.agent.fetch_news", return_value=[_article(title="Tesla news")]):
+        shell.handle_query("any news on tesla?", [])
+
+    output = test_console.export_text()
+    assert "get_stock_news" in output
+    assert "TSLA" in output
+    assert "Tesla has some news today." in output
+
+
 def _article(title="Apple hits new high"):
     return Article(title=title, date="2026-01-01T12:00:00+00:00",
                     link="https://example.com/a", symbols=["AAPL.US"],

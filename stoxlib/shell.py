@@ -183,6 +183,17 @@ def handle_tickers(text):
         show_quotes_compact(console, quotes)
 
 
+def _print_tool_call(name, args):
+    """Called by ask_agent right before each tool runs, for visibility into
+    what the model is doing (e.g. "did it actually fetch news, or just
+    answer from memory?"). Wrapped in Text() rather than markup -- args
+    ultimately trace back through the model, which may have ingested
+    external content (an article's text), so treat them as untrusted.
+    """
+    params = ", ".join("%s=%r" % (k, v) for k, v in args.items())
+    console.print(Text("  ↳ %s(%s)" % (name, params), style="dim"))
+
+
 def handle_query(text, history):
     """The natural-language path: hand off to the agent, then render its result.
 
@@ -190,7 +201,7 @@ def handle_query(text, history):
     its news?" resolve; ask_agent updates it in place.
     """
     console.print("[dim]→ agent (%s) · %s[/]" % (providers.describe_current(), text))
-    result = agent.ask_agent(text, history=history)
+    result = agent.ask_agent(text, history=history, on_tool_call=_print_tool_call)
 
     if result.error:
         console.print("[red]✗[/] %s" % result.error)

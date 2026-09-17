@@ -145,6 +145,36 @@ def test_ask_agent_executes_tool_call_then_answers():
     assert result.quotes == [_quote()]
 
 
+def test_ask_agent_calls_on_tool_call_before_running_each_tool():
+    llm = _FakeLLM([
+        AIMessage(content="", tool_calls=[
+            {"name": "get_stock_quote", "args": {"tickers": ["AAPL"]}, "id": "call1"},
+            {"name": "get_stock_news", "args": {"tickers": ["AAPL"], "limit": 3}, "id": "call2"},
+        ]),
+        AIMessage(content="done", tool_calls=[]),
+    ])
+    seen = []
+    with patch("stoxlib.agent.fetch_quotes", return_value=([_quote()], [])), \
+         patch("stoxlib.agent.fetch_news", return_value=[_article()]):
+        agent.ask_agent("what is apple doing and any news?", llm=llm,
+                         on_tool_call=lambda name, args: seen.append((name, args)))
+
+    assert seen == [
+        ("get_stock_quote", {"tickers": ["AAPL"]}),
+        ("get_stock_news", {"tickers": ["AAPL"], "limit": 3}),
+    ]
+
+
+def test_ask_agent_does_not_call_on_tool_call_when_no_tools_are_used():
+    llm = _FakeLLM([AIMessage(content="Apple is around $227.", tool_calls=[])])
+    seen = []
+
+    agent.ask_agent("what is apple trading at?", llm=llm,
+                     on_tool_call=lambda name, args: seen.append((name, args)))
+
+    assert seen == []
+
+
 def test_ask_agent_executes_news_tool_then_answers():
     llm = _FakeLLM([
         AIMessage(content="", tool_calls=[

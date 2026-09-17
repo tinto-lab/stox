@@ -155,7 +155,7 @@ def read_article(url: str) -> str:
     return run_read_article_tool(url)
 
 
-def ask_agent(query, history=None, llm=None):
+def ask_agent(query, history=None, llm=None, on_tool_call=None):
     """Resolve a natural-language query into an AgentResult.
 
     `llm` is injectable (tests can pass a fake chat model); by default it's
@@ -171,6 +171,10 @@ def ask_agent(query, history=None, llm=None):
     place, then trimmed to the most recent MAX_HISTORY_TURNS turns. On
     error, history is left untouched so a failed turn doesn't pollute
     context for the next one.
+
+    `on_tool_call`, if given, is called as `on_tool_call(name, args)` right
+    before each tool actually runs -- e.g. so the caller can print "calling
+    get_stock_news(...)" for visibility into what the model is doing.
     """
     if llm is None:
         try:
@@ -203,6 +207,8 @@ def ask_agent(query, history=None, llm=None):
 
             for call in ai_msg.tool_calls:
                 args = call["args"]
+                if on_tool_call is not None:
+                    on_tool_call(call["name"], args)
                 if call["name"] == "get_stock_quote":
                     result_text, quotes = run_quote_tool(args.get("tickers", []))
                     last_quotes = quotes or last_quotes
