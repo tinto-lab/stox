@@ -59,8 +59,12 @@ HELP = """[bold]commands[/]
   <ticker> [...]   fetch quote(s):  AAPL   or   TSLA MSFT NVDA
   <question>       ask in plain English:  what's apple trading at today?
                                            any news on tesla?
+                                           the agent remembers this session --
+                                           follow-ups like "what about its news?"
+                                           and "read that first one in full" work
   /help            this message
   /clear           clear the screen
+  /reset           forget the conversation so far (also /new)
   /quit  /exit     leave
 
 [bold]tickers[/]
@@ -141,7 +145,7 @@ def _setup_readline():
             pass  # best-effort -- terminal/readline combo may not agree
 
 
-def handle_command(cmd):
+def handle_command(cmd, history):
     cmd = cmd.lower()
     if cmd in ("/quit", "/exit", "/q"):
         console.print("[dim]bye.[/]")
@@ -151,6 +155,9 @@ def handle_command(cmd):
     elif cmd == "/clear":
         console.clear()
         console.print(Panel(BANNER, border_style="cyan", expand=False))
+    elif cmd in ("/reset", "/new"):
+        history.clear()
+        console.print("[dim]conversation forgotten -- starting fresh.[/]")
     else:
         console.print("[red]unknown command:[/] %s  [dim](try /help)[/]" % cmd)
     return True
@@ -176,10 +183,14 @@ def handle_tickers(text):
         show_quotes_compact(console, quotes)
 
 
-def handle_query(text):
-    """The natural-language path: hand off to the agent, then render its result."""
+def handle_query(text, history):
+    """The natural-language path: hand off to the agent, then render its result.
+
+    `history` carries prior turns' messages so follow-ups like "what about
+    its news?" resolve; ask_agent updates it in place.
+    """
     console.print("[dim]→ agent (%s) · %s[/]" % (providers.describe_current(), text))
-    result = agent.ask_agent(text)
+    result = agent.ask_agent(text, history=history)
 
     if result.error:
         console.print("[red]✗[/] %s" % result.error)
@@ -214,6 +225,8 @@ def main():
     else:
         console.print("[dim]LLM provider: %s[/]\n" % providers.describe_current())
 
+    history = []
+
     while True:
         try:
             line = input(PROMPT).strip()
@@ -223,9 +236,9 @@ def main():
         if not line:
             continue
         if line.startswith("/"):
-            if not handle_command(line):
+            if not handle_command(line, history):
                 break
         elif _looks_like_query(line):
-            handle_query(line)
+            handle_query(line, history)
         else:
             handle_tickers(line)

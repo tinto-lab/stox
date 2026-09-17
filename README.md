@@ -100,6 +100,7 @@ Type one or more tickers, or a plain-English question, at the `›` prompt:
 ›  TSLA MSFT NVDA                       # several at once = one API call
 ›  what's apple trading at today?       # routed to the agent, quote lookup
 ›  any news on tesla?                   # routed to the agent, news lookup
+›  what about its news?                 # remembers "tesla" from the last question
 ›  what's going on with apple and how's it trading?   # agent can call both
 ```
 
@@ -111,6 +112,7 @@ Commands:
 | `<question>`   | ask in plain English — quotes, news, or both (needs an LLM key) |
 | `/help`        | show help                                                  |
 | `/clear`       | clear the screen                                           |
+| `/reset`       | forget the conversation so far (also `/new`)               |
 | `/quit`        | leave (also `/exit`, Ctrl-D)                               |
 
 News comes from EODHD too (same key as quotes), via the `get_stock_news`
@@ -121,6 +123,15 @@ about the deal terms?"), the agent can call a third tool, `read_article`,
 to fetch and read one article's full text — but only for a url that
 `get_stock_news` actually returned in that conversation, never an
 arbitrary url, so the model can't direct stox to fetch anything else.
+
+### Conversation memory
+
+The agent remembers the current session: follow-ups like "what about its
+news?" or "read that first one in full" resolve against earlier turns,
+not just the latest question. History is kept in memory only (nothing is
+written to disk) and is capped at the most recent 6 turns to bound token
+cost, trimmed only at safe turn boundaries. Run `/reset` (or `/new`) to
+start a clean conversation without restarting stox.
 
 ### Ticker format
 
@@ -154,7 +165,7 @@ before every test so a developer's own shell exports can't leak in):
 | `test_webfetch.py`    | article text extraction, HTTP/error handling (mocked) |
 | `test_rendering.py`   | quote/news formatting (arrows, colors, volume units, panel/table output) |
 | `test_providers.py`   | provider registry resolution, missing key/package errors  |
-| `test_agent.py`       | the tool-calling loop (all three tools) and the read_article url allow-list, using a fake chat model — no LLM calls |
+| `test_agent.py`       | the tool-calling loop (all three tools), the read_article url allow-list, and conversation-history threading/trimming, using a fake chat model — no LLM calls |
 | `test_config.py`      | `.env` load order and precedence vs. real env vars         |
 | `test_shell.py`       | input routing, command handling, the REPL loop (canned input) |
 
@@ -172,5 +183,6 @@ before every test so a developer's own shell exports can't leak in):
 - [ ] Confirm the agent path end-to-end with a real LLM provider key
 - [x] Financial news (EODHD, via the `get_stock_news` agent tool)
 - [x] Full-article reading when a news summary isn't enough (`read_article`)
+- [x] Conversation memory across turns in a session (`/reset` to clear it)
 - [ ] Add fundamentals fetch (financials, ratios — also where company names live)
 - [ ] CI (run `pytest` on push)

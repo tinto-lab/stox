@@ -7,6 +7,7 @@ shell.py owns all console output, so this module has no UI dependency and
 no reason to change when the console formatting does.
 """
 
+import re
 from dataclasses import dataclass, field
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
@@ -43,6 +44,21 @@ class AgentResult:
     error: str | None = None
 
 
+MAX_HISTORY_TURNS = 6
+
+
+def _trim_history(history):
+    """Drop the oldest whole turns once history exceeds MAX_HISTORY_TURNS,
+    so it stays bounded without ever splitting a tool call from its
+    result -- a turn always starts at a HumanMessage, so that's the only
+    safe place to cut.
+    """
+    human_indices = [i for i, m in enumerate(history) if isinstance(m, HumanMessage)]
+    if len(human_indices) > MAX_HISTORY_TURNS:
+        cutoff = human_indices[-MAX_HISTORY_TURNS]
+        del history[:cutoff]
+
+
 def run_quote_tool(tickers):
     """Fetch quotes and render them as tool-result text; also return the Quotes."""
     try:
@@ -71,6 +87,22 @@ def get_stock_quote(tickers: list[str]) -> str:
     """
     text, _ = run_quote_tool(tickers)
     return text
+
+
+_URL_LINE_RE = re.compile(r"^url: (\S+)$", re.MULTILINE)
+
+
+def _article_urls_in(messages):
+    """Recover article urls from get_stock_news tool results in `messages`,
+    by matching the "url: ..." lines run_news_tool's output uses. Lets
+    read_article's allow-list cover articles surfaced in earlier turns,
+    not just this one.
+    """
+    urls = set()
+    for m in messages:
+        if isinstance(m, ToolMessage) and isinstance(m.content, str):
+            urls.update(_URL_LINE_RE.findall(m.content))
+    return urls
 
 
 def run_news_tool(tickers, limit=5):
@@ -123,11 +155,22 @@ def read_article(url: str) -> str:
     return run_read_article_tool(url)
 
 
-def ask_agent(query, llm=None):
+def ask_agent(query, history=None, llm=None):
     """Resolve a natural-language query into an AgentResult.
 
     `llm` is injectable (tests can pass a fake chat model); by default it's
     built from the configured provider.
+
+    `history` is a mutable list of prior LangChain messages (no system
+    message -- that's added fresh each call) carried over from earlier
+    turns in the same conversation, e.g. so "what about its news?" can
+    resolve "its" from the previous question. Pass the same list back in
+    on the next call to keep the thread going; omit it for a one-off,
+    stateless question. On success this turn's exchange (the user message,
+    any tool calls/results, and the final answer) is appended to it in
+    place, then trimmed to the most recent MAX_HISTORY_TURNS turns. On
+    error, history is left untouched so a failed turn doesn't pollute
+    context for the next one.
     """
     if llm is None:
         try:
@@ -135,13 +178,17 @@ def ask_agent(query, llm=None):
         except AgentError as e:
             return AgentResult(error=str(e))
 
+    if history is None:
+        history = []
+
     llm_with_tools = llm.bind_tools([get_stock_quote, get_stock_news, read_article])
-    messages = [SystemMessage(content=AGENT_SYSTEM), HumanMessage(content=query)]
+    messages = [SystemMessage(content=AGENT_SYSTEM)] + history + [HumanMessage(content=query)]
     last_quotes = []
     last_articles = []
-    # Only urls that get_stock_news actually returned in this conversation
-    # may be read -- the model can't direct us to fetch an arbitrary url.
-    known_article_urls = set()
+    # Only urls that get_stock_news actually returned (this turn or an
+    # earlier one still in history) may be read -- the model can't direct
+    # us to fetch an arbitrary url.
+    known_article_urls = _article_urls_in(history)
 
     try:
         while True:
@@ -150,6 +197,8 @@ def ask_agent(query, llm=None):
 
             if not ai_msg.tool_calls:
                 text = ai_msg.content if isinstance(ai_msg.content, str) else str(ai_msg.content)
+                history[:] = messages[1:]  # drop the system message, keep the rest
+                _trim_history(history)
                 return AgentResult(text=text, quotes=last_quotes, articles=last_articles)
 
             for call in ai_msg.tool_calls:

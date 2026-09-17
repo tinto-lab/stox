@@ -1,6 +1,6 @@
 from unittest.mock import Mock, patch
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from stoxlib import agent
 from stoxlib.news import Article, NewsError
@@ -111,11 +111,13 @@ class _FakeLLM:
 
     def __init__(self, responses):
         self._responses = list(responses)
+        self.received_messages = []  # one entry per invoke() call
 
     def bind_tools(self, tools):
         return self
 
     def invoke(self, messages):
+        self.received_messages.append(list(messages))
         return self._responses.pop(0)
 
 
@@ -241,3 +243,104 @@ def test_ask_agent_wraps_unexpected_exceptions():
     result = agent.ask_agent("what is apple trading at?", llm=llm)
 
     assert result.error == "agent error: provider blew up"
+
+
+# -- conversation memory --------------------------------------------------
+# Regression coverage for a real bug: ask_agent used to build a fresh
+# two-message prompt every call, so the agent had no idea what was asked
+# a turn ago ("what about its news?" couldn't resolve "its").
+
+def test_ask_agent_sends_prior_history_to_the_llm():
+    history = [HumanMessage(content="what is apple trading at?"),
+               AIMessage(content="Apple is around $227.", tool_calls=[])]
+    llm = _FakeLLM([AIMessage(content="It's up 1.4% today.", tool_calls=[])])
+
+    agent.ask_agent("how much has it moved today?", history=list(history), llm=llm)
+
+    sent = llm.received_messages[0]
+    assert sent[0].content == agent.AGENT_SYSTEM
+    assert sent[1] == history[0]
+    assert sent[2] == history[1]
+    assert sent[3].content == "how much has it moved today?"
+
+
+def test_ask_agent_appends_this_turns_exchange_to_history_in_place():
+    history = []
+    llm = _FakeLLM([
+        AIMessage(content="", tool_calls=[
+            {"name": "get_stock_quote", "args": {"tickers": ["AAPL"]}, "id": "call1"},
+        ]),
+        AIMessage(content="Apple is trading up today.", tool_calls=[]),
+    ])
+    with patch("stoxlib.agent.fetch_quotes", return_value=([_quote()], [])):
+        agent.ask_agent("what is apple trading at?", history=history, llm=llm)
+
+    # the caller's list object is updated in place (no system message)
+    assert isinstance(history[0], HumanMessage)
+    assert history[0].content == "what is apple trading at?"
+    assert isinstance(history[-1], AIMessage)
+    assert history[-1].content == "Apple is trading up today."
+    assert all(m.content != agent.AGENT_SYSTEM for m in history)
+
+
+def test_ask_agent_leaves_history_untouched_on_error():
+    history = [HumanMessage(content="what is apple trading at?"),
+               AIMessage(content="Apple is around $227.", tool_calls=[])]
+    original = list(history)
+    llm = Mock()
+    llm.bind_tools.return_value = llm
+    llm.invoke.side_effect = RuntimeError("provider blew up")
+
+    result = agent.ask_agent("and now?", history=history, llm=llm)
+
+    assert result.error == "agent error: provider blew up"
+    assert history == original
+
+
+def test_ask_agent_can_read_an_article_whose_url_only_appears_in_history():
+    """A url returned by get_stock_news in an earlier turn must still be
+    readable in a later turn -- read_article shouldn't require re-fetching
+    the news list first."""
+    history = [
+        HumanMessage(content="any news on apple?"),
+        ToolMessage(content="date: 2026-01-01\ntitle: Apple hits new high\n"
+                            "url: https://example.com/a\nsummary: Some summary.",
+                    tool_call_id="call0"),
+        AIMessage(content="Apple's in the news.", tool_calls=[]),
+    ]
+    llm = _FakeLLM([
+        AIMessage(content="", tool_calls=[
+            {"name": "read_article", "args": {"url": "https://example.com/a"}, "id": "call1"},
+        ]),
+        AIMessage(content="Here's more detail.", tool_calls=[]),
+    ])
+    with patch("stoxlib.agent.fetch_article_text", return_value="full text") as mock_fetch:
+        result = agent.ask_agent("tell me more about that", history=history, llm=llm)
+
+    mock_fetch.assert_called_once_with("https://example.com/a")
+    assert result.error is None
+    assert result.text == "Here's more detail."
+
+
+def test_trim_history_keeps_history_under_the_limit_and_cuts_at_a_turn_boundary():
+    # build MAX_HISTORY_TURNS + 2 turns, each a HumanMessage/AIMessage pair
+    history = []
+    for i in range(agent.MAX_HISTORY_TURNS + 2):
+        history.append(HumanMessage(content="question %d" % i))
+        history.append(AIMessage(content="answer %d" % i, tool_calls=[]))
+
+    agent._trim_history(history)
+
+    human_msgs = [m for m in history if isinstance(m, HumanMessage)]
+    assert len(human_msgs) == agent.MAX_HISTORY_TURNS
+    assert isinstance(history[0], HumanMessage)  # never cuts mid-turn
+    assert human_msgs[-1].content == "question %d" % (agent.MAX_HISTORY_TURNS + 1)
+
+
+def test_trim_history_is_a_noop_under_the_limit():
+    history = [HumanMessage(content="q"), AIMessage(content="a", tool_calls=[])]
+    original = list(history)
+
+    agent._trim_history(history)
+
+    assert history == original
