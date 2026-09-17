@@ -231,7 +231,7 @@ def test_handle_query_shows_tool_calls_end_to_end(test_console):
         AIMessage(content="Tesla has some news today.", tool_calls=[]),
     ])
     with patch("stoxlib.agent.build_llm", return_value=llm), \
-         patch("stoxlib.agent.fetch_news", return_value=[_article(title="Tesla news")]):
+         patch("stoxlib.tools.fetch_news", return_value=[_article(title="Tesla news")]):
         shell.handle_query("any news on tesla?", [])
 
     output = test_console.export_text()

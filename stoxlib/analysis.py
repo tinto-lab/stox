@@ -2,7 +2,7 @@
 feeding into a risk-assessment aggregator.
 
 Each specialist is its own LLM call with a narrow system prompt and its own
-slice of the tool surface from agent.py (reused, not duplicated), so a
+slice of the tool surface from tools.py (reused, not duplicated), so a
 change to how one analyzes doesn't ripple into the others. The aggregator
 sees only their written findings, not the raw tool data, and never calls
 tools itself -- it synthesizes, it doesn't investigate.
@@ -12,15 +12,16 @@ Returns data (AnalysisResult), never prints -- same rule as agent.py.
 
 from dataclasses import dataclass, field
 
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 
-from .agent import (UNKNOWN_ARTICLE_URL_ERROR, get_company_fundamentals,
+from .considerations import load_considerations
+from .providers import AgentError, build_llm
+from .tool_loop import run_tool_loop
+from .tools import (UNKNOWN_ARTICLE_URL_ERROR, get_company_fundamentals,
                      get_price_history, get_stock_news, get_stock_quote,
                      read_article, run_fundamentals_tool, run_history_tool,
                      run_news_tool, run_quote_tool, run_read_article_tool)
-from .considerations import load_considerations
-from .providers import AgentError, build_llm
 
 MAX_TOOL_ROUNDS = 6
 
@@ -31,10 +32,9 @@ _BUDGET_EXHAUSTED_NOTICE = (
 
 
 def _run_specialist(llm, system_prompt, tools, user_prompt, dispatch, on_tool_call=None):
-    """Shared tool-calling loop for one specialist agent: binds `tools`,
-    asks `user_prompt`, runs any tool calls through `dispatch(name, args) ->
-    result_text`, and returns the model's final text once it stops calling
-    tools.
+    """Run one specialist agent: asks `user_prompt`, runs any tool calls
+    through `dispatch(name, args) -> result_text`, and returns the model's
+    final text once it stops calling tools.
 
     MAX_TOOL_ROUNDS counts LLM invocations, not tool calls before an
     answer -- a model that reads a couple of articles one at a time (e.g.
@@ -46,25 +46,10 @@ def _run_specialist(llm, system_prompt, tools, user_prompt, dispatch, on_tool_ca
     must write up whatever it already gathered instead of us fabricating
     a failure message.
     """
-    llm_with_tools = llm.bind_tools(tools)
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
-
-    for _ in range(MAX_TOOL_ROUNDS):
-        ai_msg = llm_with_tools.invoke(messages)
-        messages.append(ai_msg)
-
-        if not ai_msg.tool_calls:
-            return ai_msg.content if isinstance(ai_msg.content, str) else str(ai_msg.content)
-
-        for call in ai_msg.tool_calls:
-            if on_tool_call is not None:
-                on_tool_call(call["name"], call["args"])
-            result_text = dispatch(call["name"], call["args"])
-            messages.append(ToolMessage(content=result_text, tool_call_id=call["id"]))
-
-    messages.append(HumanMessage(content=_BUDGET_EXHAUSTED_NOTICE))
-    final_msg = llm.invoke(messages)
-    return final_msg.content if isinstance(final_msg.content, str) else str(final_msg.content)
+    return run_tool_loop(llm, messages, tools, dispatch, on_tool_call=on_tool_call,
+                          max_rounds=MAX_TOOL_ROUNDS,
+                          budget_exhausted_notice=_BUDGET_EXHAUSTED_NOTICE)
 
 
 TREND_AGENT_SYSTEM = (
