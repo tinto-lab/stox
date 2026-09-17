@@ -15,6 +15,7 @@ from rich.text import Text
 
 from . import agent, providers
 from .config import CONFIG_DIR, load_env
+from .considerations import CONSIDERATIONS_FILE, load_considerations
 from .quotes import QuoteError, api_key, fetch_quotes, normalize
 from .rendering import show_news, show_quote, show_quotes_compact
 
@@ -59,12 +60,15 @@ HELP = """[bold]commands[/]
   <ticker> [...]   fetch quote(s):  AAPL   or   TSLA MSFT NVDA
   <question>       ask in plain English:  what's apple trading at today?
                                            any news on tesla?
+                                           always factor in insider selling
+                                           when you explain price moves
                                            the agent remembers this session --
                                            follow-ups like "what about its news?"
                                            and "read that first one in full" work
   /help            this message
   /clear           clear the screen
   /reset           forget the conversation so far (also /new)
+  /considerations  list standing factors the agent always weighs (also /remembered)
   /quit  /exit     leave
 
 [bold]tickers[/]
@@ -83,7 +87,10 @@ HELP = """[bold]commands[/]
   plain-English questions need an LLM provider:
     STOX_LLM_PROVIDER=anthropic|deepseek|openai  (default: anthropic)
     STOX_LLM_MODEL=...     optional, each provider has a default
-    ANTHROPIC_API_KEY=...  or DEEPSEEK_API_KEY / OPENAI_API_KEY"""
+    ANTHROPIC_API_KEY=...  or DEEPSEEK_API_KEY / OPENAI_API_KEY
+
+  standing considerations persist to ~/.config/stox/considerations.txt --
+  plain text, one per line, safe to hand-edit or delete."""
 
 _QUERY_HINTS = {
     "what", "whats", "what's", "is", "are", "the", "of", "how", "much",
@@ -145,6 +152,20 @@ def _setup_readline():
             pass  # best-effort -- terminal/readline combo may not agree
 
 
+def _show_considerations():
+    """List standing considerations stored on disk (see /reset for
+    session-only conversation memory, which this is not)."""
+    items = load_considerations()
+    if not items:
+        console.print("[dim]no standing considerations yet -- tell the agent "
+                       "to always factor something in, or edit %s "
+                       "directly.[/]" % CONSIDERATIONS_FILE)
+        return
+    console.print("[dim]standing considerations (%s):[/]" % CONSIDERATIONS_FILE)
+    for item in items:
+        console.print(Text("  - " + item))
+
+
 def handle_command(cmd, history):
     cmd = cmd.lower()
     if cmd in ("/quit", "/exit", "/q"):
@@ -158,6 +179,8 @@ def handle_command(cmd, history):
     elif cmd in ("/reset", "/new"):
         history.clear()
         console.print("[dim]conversation forgotten -- starting fresh.[/]")
+    elif cmd in ("/considerations", "/remembered"):
+        _show_considerations()
     else:
         console.print("[red]unknown command:[/] %s  [dim](try /help)[/]" % cmd)
     return True

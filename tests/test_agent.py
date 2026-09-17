@@ -2,7 +2,7 @@ from unittest.mock import Mock, patch
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from stoxlib import agent
+from stoxlib import agent, considerations
 from stoxlib.news import Article, NewsError
 from stoxlib.quotes import Quote, QuoteError
 from stoxlib.webfetch import FetchError
@@ -104,6 +104,42 @@ def test_read_article_tool_returns_text_only():
         result = agent.read_article.invoke({"url": "https://example.com/a"})
 
     assert result == "full article text"
+
+
+def test_run_remember_consideration_tool_stores_and_confirms():
+    result = agent.run_remember_consideration_tool("always factor in insider selling")
+
+    assert result == "remembered: always factor in insider selling"
+    assert considerations.load_considerations() == ["always factor in insider selling"]
+
+
+def test_run_remember_consideration_tool_rejects_empty_text():
+    result = agent.run_remember_consideration_tool("   ")
+
+    assert result == "error: nothing to remember"
+    assert considerations.load_considerations() == []
+
+
+def test_remember_consideration_tool_returns_text_only():
+    result = agent.remember_consideration.invoke({"text": "watch for insider selling"})
+
+    assert result == "remembered: watch for insider selling"
+    assert considerations.load_considerations() == ["watch for insider selling"]
+
+
+def test_build_system_prompt_unchanged_with_no_considerations():
+    assert agent._build_system_prompt() == agent.AGENT_SYSTEM
+
+
+def test_build_system_prompt_appends_stored_considerations():
+    considerations.add_consideration("always factor in insider selling")
+    considerations.add_consideration("mention sector-wide trends")
+
+    prompt = agent._build_system_prompt()
+
+    assert prompt.startswith(agent.AGENT_SYSTEM)
+    assert "always factor in insider selling" in prompt
+    assert "mention sector-wide trends" in prompt
 
 
 class _FakeLLM:
@@ -242,6 +278,39 @@ def test_ask_agent_refuses_to_read_a_url_news_never_returned():
     mock_fetch.assert_not_called()
     assert result.error is None
     assert result.text == "done"
+
+
+def test_ask_agent_persists_a_remembered_consideration_across_the_call():
+    llm = _FakeLLM([
+        AIMessage(content="", tool_calls=[
+            {"name": "remember_consideration",
+             "args": {"text": "always factor in insider selling"}, "id": "call1"},
+        ]),
+        AIMessage(content="Got it, I'll factor that in from now on.", tool_calls=[]),
+    ])
+    seen_tool_calls = []
+
+    result = agent.ask_agent(
+        "always factor in insider selling when explaining price moves",
+        llm=llm, on_tool_call=lambda name, args: seen_tool_calls.append((name, args)),
+    )
+
+    assert result.error is None
+    assert result.text == "Got it, I'll factor that in from now on."
+    assert seen_tool_calls == [
+        ("remember_consideration", {"text": "always factor in insider selling"}),
+    ]
+    assert considerations.load_considerations() == ["always factor in insider selling"]
+
+
+def test_ask_agent_includes_stored_considerations_in_the_system_prompt():
+    considerations.add_consideration("always factor in insider selling")
+    llm = _FakeLLM([AIMessage(content="Sure.", tool_calls=[])])
+
+    agent.ask_agent("why is apple down today?", llm=llm)
+
+    system_message = llm.received_messages[0][0]
+    assert "always factor in insider selling" in system_message.content
 
 
 def test_ask_agent_reports_unknown_tool_without_crashing():

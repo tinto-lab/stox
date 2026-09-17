@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 from rich.console import Console
 
-from stoxlib import shell
+from stoxlib import considerations, shell
 from stoxlib.agent import AgentResult
 from stoxlib.news import Article
 from stoxlib.quotes import Quote, QuoteError
@@ -88,6 +88,35 @@ def test_handle_command_reset_clears_history(test_console, cmd):
     assert shell.handle_command(cmd, history) is True
     assert history == []
     assert "forgotten" in test_console.export_text()
+
+
+@pytest.mark.parametrize("cmd", ["/considerations", "/remembered"])
+def test_handle_command_considerations_lists_stored_items(test_console, cmd):
+    considerations.add_consideration("always factor in insider selling")
+    assert shell.handle_command(cmd, []) is True
+    output = test_console.export_text()
+    assert "always factor in insider selling" in output
+
+
+def test_handle_command_considerations_reports_when_empty(test_console):
+    assert shell.handle_command("/considerations", []) is True
+    assert "no standing considerations yet" in test_console.export_text()
+
+
+def test_handle_command_considerations_does_not_touch_history(test_console):
+    sentinel = object()
+    history = [sentinel]
+    shell.handle_command("/considerations", history)
+    assert history == [sentinel]
+
+
+def test_show_considerations_does_not_let_items_be_parsed_as_markup(test_console):
+    """Consideration text traces back through the model, which may have
+    ingested external content -- a stray '[' must render literally."""
+    considerations.add_consideration("[bold red]not a style tag[/]")
+    shell.handle_command("/considerations", [])
+    output = test_console.export_text()
+    assert "[bold red]not a style tag[/]" in output
 
 
 def test_handle_tickers_success(test_console):

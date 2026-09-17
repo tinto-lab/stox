@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 
+from .considerations import add_consideration, load_considerations
 from .news import NewsError, fetch_news
 from .providers import AgentError, build_llm
 from .quotes import QuoteError, fetch_quotes
@@ -29,11 +30,34 @@ AGENT_SYSTEM = (
     "term, or other detail it doesn't cover), call read_article with the "
     "exact url of the most relevant article from get_stock_news's results "
     "to read its full text -- you can only read urls that came from "
-    "get_stock_news, not urls from anywhere else. Answer in one or two "
+    "get_stock_news, not urls from anywhere else. If the user asks you to "
+    "always factor something in, keep something in mind, or remember a "
+    "standing consideration for future 'why is it moving' or risk "
+    "questions, call remember_consideration to save it permanently across "
+    "sessions -- only for standing instructions about how you analyze, "
+    "never for one-off facts like today's price. Answer in one or two "
     "short sentences using what the tools return. Don't repeat raw tool "
     "output verbatim and don't restate a full table or headline list -- a "
     "detailed panel is printed to the console right after your answer."
 )
+
+
+def _build_system_prompt():
+    """AGENT_SYSTEM plus any standing considerations stored on disk.
+
+    Read fresh on every call (not cached at import time) so a
+    consideration remembered mid-session applies to this same session's
+    later turns too, not just future ones.
+    """
+    considerations = load_considerations()
+    if not considerations:
+        return AGENT_SYSTEM
+    bullets = "\n".join("- %s" % c for c in considerations)
+    return AGENT_SYSTEM + (
+        "\n\nStanding considerations the user has asked you to always "
+        "weigh when explaining why a price might be moving or assessing "
+        "risk for a security (these persist across sessions):\n%s" % bullets
+    )
 
 
 @dataclass
@@ -155,6 +179,28 @@ def read_article(url: str) -> str:
     return run_read_article_tool(url)
 
 
+def run_remember_consideration_tool(text):
+    """Store a standing consideration to disk as tool-result text."""
+    text = (text or "").strip()
+    if not text:
+        return "error: nothing to remember"
+    add_consideration(text)
+    return "remembered: %s" % text
+
+
+@tool
+def remember_consideration(text: str) -> str:
+    """Permanently remember a factor to always weigh when explaining why a
+    price might be moving or assessing risk for a security.
+
+    This persists across sessions, not just this conversation. Call it
+    when the user says something like "always consider X", "keep Y in
+    mind when talking about risk", or "remember this for next time" --
+    not for one-off facts that aren't standing instructions.
+    """
+    return run_remember_consideration_tool(text)
+
+
 def ask_agent(query, history=None, llm=None, on_tool_call=None):
     """Resolve a natural-language query into an AgentResult.
 
@@ -185,8 +231,10 @@ def ask_agent(query, history=None, llm=None, on_tool_call=None):
     if history is None:
         history = []
 
-    llm_with_tools = llm.bind_tools([get_stock_quote, get_stock_news, read_article])
-    messages = [SystemMessage(content=AGENT_SYSTEM)] + history + [HumanMessage(content=query)]
+    llm_with_tools = llm.bind_tools(
+        [get_stock_quote, get_stock_news, read_article, remember_consideration]
+    )
+    messages = [SystemMessage(content=_build_system_prompt())] + history + [HumanMessage(content=query)]
     last_quotes = []
     last_articles = []
     # Only urls that get_stock_news actually returned (this turn or an
@@ -222,6 +270,8 @@ def ask_agent(query, history=None, llm=None, on_tool_call=None):
                         result_text = "error: url must be one get_stock_news returned in this conversation"
                     else:
                         result_text = run_read_article_tool(url)
+                elif call["name"] == "remember_consideration":
+                    result_text = run_remember_consideration_tool(args.get("text", ""))
                 else:
                     result_text = "unknown tool"
                 messages.append(ToolMessage(content=result_text, tool_call_id=call["id"]))
