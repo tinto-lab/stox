@@ -6,6 +6,15 @@ import requests
 from stoxlib import webz
 
 
+@pytest.fixture(autouse=True)
+def clear_webz_cache():
+    """Several tests below reuse the same query string ("query") expecting
+    a fresh HTTP call and independent error handling each time -- without
+    this, the first successful call would cache a result the later tests
+    would get back instead of ever hitting requests.get."""
+    webz._cache.clear()
+
+
 def test_truncate_leaves_short_text_alone():
     assert webz._truncate("short text", limit=240) == "short text"
 
@@ -77,9 +86,9 @@ def test_fetch_geo_news_parses_posts_response(monkeypatch):
     assert called_params["token"] == "demo"
 
 
-def test_fetch_geo_news_trims_to_limit_client_side(monkeypatch):
-    """The News API has no size/limit request param -- it always returns a
-    fixed page, so `limit` is enforced by trimming the parsed results."""
+def test_fetch_geo_news_sends_size_matching_limit(monkeypatch):
+    """size controls how many posts the API returns (and bills for), so it
+    should track `limit` instead of defaulting to a full, fully-billed page."""
     monkeypatch.setenv("WEBZ_API_KEY", "demo")
     response = Mock(status_code=200)
     response.json.return_value = {
@@ -90,7 +99,62 @@ def test_fetch_geo_news_trims_to_limit_client_side(monkeypatch):
         articles = webz.fetch_geo_news("query", limit=3)
 
     assert len(articles) == 3
-    assert "size" not in mock_get.call_args.kwargs["params"]
+    assert mock_get.call_args.kwargs["params"]["size"] == 3
+
+
+def test_fetch_geo_news_clamps_size_to_the_api_max(monkeypatch):
+    monkeypatch.setenv("WEBZ_API_KEY", "demo")
+    response = Mock(status_code=200)
+    response.json.return_value = {"posts": []}
+    with patch("stoxlib.webz.requests.get", return_value=response) as mock_get:
+        webz.fetch_geo_news("query", limit=500)
+
+    assert mock_get.call_args.kwargs["params"]["size"] == webz._MAX_SIZE
+
+
+def test_fetch_geo_news_caches_repeat_queries(monkeypatch):
+    """A second call with the same (query, limit) shouldn't hit the API
+    again -- this is what protects the search budget when a specialist
+    tries overlapping angles, or re-analyzes the same ticker soon after."""
+    monkeypatch.setenv("WEBZ_API_KEY", "demo")
+    response = Mock(status_code=200)
+    response.json.return_value = {
+        "posts": [{"title": "Cached article", "url": "https://example.com/a"}],
+    }
+    with patch("stoxlib.webz.requests.get", return_value=response) as mock_get:
+        first = webz.fetch_geo_news("Taiwan tariffs", limit=5)
+        second = webz.fetch_geo_news("Taiwan tariffs", limit=5)
+
+    assert first == second
+    mock_get.assert_called_once()
+
+
+def test_fetch_geo_news_cache_expires_after_ttl(monkeypatch):
+    monkeypatch.setenv("WEBZ_API_KEY", "demo")
+    response = Mock(status_code=200)
+    response.json.return_value = {
+        "posts": [{"title": "Fresh article", "url": "https://example.com/a"}],
+    }
+    times = iter([0.0, webz._CACHE_TTL_SECONDS + 1, webz._CACHE_TTL_SECONDS + 1])
+    with patch("stoxlib.webz.requests.get", return_value=response) as mock_get, \
+         patch("stoxlib.webz.time.monotonic", side_effect=lambda: next(times)):
+        webz.fetch_geo_news("query", limit=5)
+        webz.fetch_geo_news("query", limit=5)
+
+    assert mock_get.call_count == 2
+
+
+def test_fetch_geo_news_does_not_cache_a_different_limit(monkeypatch):
+    monkeypatch.setenv("WEBZ_API_KEY", "demo")
+    response = Mock(status_code=200)
+    response.json.return_value = {
+        "posts": [{"title": "Article", "url": "https://example.com/a"}],
+    }
+    with patch("stoxlib.webz.requests.get", return_value=response) as mock_get:
+        webz.fetch_geo_news("query", limit=5)
+        webz.fetch_geo_news("query", limit=10)
+
+    assert mock_get.call_count == 2
 
 
 def test_fetch_geo_news_handles_non_dict_response(monkeypatch):

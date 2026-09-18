@@ -167,11 +167,22 @@ GEOPOLITICS_AGENT_SYSTEM = (
 )
 
 
+MAX_GEO_SEARCHES = 3
+
+_GEO_SEARCH_BUDGET_NOTICE = (
+    "error: you've used up your %d searches for this run -- work with what "
+    "you already have instead of searching again" % MAX_GEO_SEARCHES
+)
+
+
 def _run_geopolitics_agent(llm, ticker, on_tool_call=None):
-    state = {"articles": [], "known_urls": set()}
+    state = {"articles": [], "known_urls": set(), "searches": 0}
 
     def dispatch(name, args):
         if name == "get_geopolitical_news":
+            if state["searches"] >= MAX_GEO_SEARCHES:
+                return _GEO_SEARCH_BUDGET_NOTICE
+            state["searches"] += 1
             text, articles = run_geo_news_tool(args.get("query") or ticker, limit=args.get("limit", 5))
             state["articles"] = articles or state["articles"]
             state["known_urls"].update(a.link for a in articles if a.link)

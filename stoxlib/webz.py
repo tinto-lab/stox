@@ -27,6 +27,36 @@ WEBZ_URL = "https://api.webz.io/api/news"
 _RATE_LIMIT_RETRIES = 2
 _RATE_LIMIT_BACKOFF = 1.5
 
+# Billing is per call *and* per result returned (see docs.webz.io/docs/webz/
+# news-blogs-forums-parameters), so a query that would otherwise return up
+# to `size`'s default of 100 posts is billed for all 100 even though we
+# only keep `limit` of them -- passing size=limit bills for what we
+# actually use.
+_MAX_SIZE = 100
+
+# Short-lived cache keyed on the exact (query, limit) pair, so a specialist
+# trying a couple of overlapping search angles in one run -- or two runs
+# for the same ticker minutes apart -- doesn't pay for the same query
+# twice. Kept process-local and in-memory: no need for anything sturdier
+# for a cache this short-lived.
+_CACHE_TTL_SECONDS = 300
+_cache: dict = {}
+
+
+def _cache_get(key):
+    entry = _cache.get(key)
+    if entry is None:
+        return None
+    cached_at, articles = entry
+    if time.monotonic() - cached_at > _CACHE_TTL_SECONDS:
+        del _cache[key]
+        return None
+    return articles
+
+
+def _cache_set(key, articles):
+    _cache[key] = (time.monotonic(), articles)
+
 
 def api_key() -> str:
     """Read WEBZ_API_KEY on every call (not just at import time), so a key
@@ -97,14 +127,16 @@ def fetch_geo_news(query, limit=5):
 
     Raises WebzError on total failure (no results just means an empty list).
     """
+    cache_key = (query, limit)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     key = api_key()
     if not key:
         raise WebzError("no API key set -- see /help")
 
-    # the News API has no size/limit param -- it returns a fixed page (see
-    # docs.webz.io/docs/webz/news-api-filters), so `limit` is enforced by
-    # trimming the parsed results below instead of by the request itself
-    params = {"token": key, "q": query}
+    params = {"token": key, "q": query, "size": max(1, min(limit, _MAX_SIZE))}
 
     r = None
     for attempt in range(_RATE_LIMIT_RETRIES + 1):
@@ -129,4 +161,6 @@ def fetch_geo_news(query, limit=5):
         raise WebzError("couldn't parse server response") from e
 
     rows = data.get("posts", []) if isinstance(data, dict) else []
-    return [a for a in (_parse(row) for row in rows) if a][:limit]
+    articles = [a for a in (_parse(row) for row in rows) if a][:limit]
+    _cache_set(cache_key, articles)
+    return articles

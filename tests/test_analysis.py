@@ -187,6 +187,26 @@ def test_run_geopolitics_agent_refuses_to_read_an_unknown_url():
     assert text == "done"
 
 
+def test_run_geopolitics_agent_caps_searches_per_run():
+    """The system prompt tells the model to search from more than one
+    angle, so the loop itself -- not just the wording -- must stop it from
+    turning that into unbounded, separately-billed webz.io calls."""
+    llm = _FakeLLM(
+        [
+            AIMessage(content="", tool_calls=[
+                {"name": "get_geopolitical_news", "args": {"query": "angle %d" % i}, "id": "c%d" % i},
+            ])
+            for i in range(analysis.MAX_GEO_SEARCHES + 2)
+        ]
+        + [AIMessage(content="done", tool_calls=[])]
+    )
+    with patch("stoxlib.analysis.run_geo_news_tool",
+               return_value=("geo", [_geo_article()])) as mock_tool:
+        analysis._run_geopolitics_agent(llm, "AAPL")
+
+    assert mock_tool.call_count == analysis.MAX_GEO_SEARCHES
+
+
 def test_run_specialist_forces_a_final_answer_after_max_tool_rounds():
     """A model that spends every round on a tool call (e.g. reading several
     articles one at a time) must still end up with a real answer, not a
