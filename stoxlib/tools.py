@@ -7,6 +7,8 @@ neutral of both, so neither module has to import the other just to reach
 a tool definition.
 """
 
+from concurrent.futures import ThreadPoolExecutor
+
 from .fundamentals import FundamentalsError, fetch_fundamentals
 from .history import HistoryError, fetch_history
 from .news import NewsError, fetch_news
@@ -14,6 +16,29 @@ from .quotes import QuoteError, fetch_quotes
 from .webfetch import FetchError, fetch_article_text
 from .webz import WebzError, fetch_geo_news
 from langchain_core.tools import tool
+
+MAX_ARTICLE_FETCH_WORKERS = 5
+
+
+def _fetch_bodies(links):
+    """Fetch full article text for each link concurrently (one slow or
+    blocked site shouldn't hold up the rest), falling back to None per
+    link that fails -- callers fall back to the provider's own summary
+    for those instead of dropping the article.
+    """
+    if not links:
+        return []
+
+    def _one(link):
+        if not link:
+            return None
+        try:
+            return fetch_article_text(link)
+        except FetchError:
+            return None
+
+    with ThreadPoolExecutor(max_workers=min(len(links), MAX_ARTICLE_FETCH_WORKERS)) as pool:
+        return list(pool.map(_one, links))
 
 
 def run_quote_tool(tickers):
@@ -137,7 +162,12 @@ def get_company_fundamentals(ticker: str) -> str:
 
 
 def run_news_tool(tickers, limit=5):
-    """Fetch news and render it as tool-result text; also return the Articles."""
+    """Fetch news and render it as tool-result text; also return the
+    Articles. Each block carries the article's full text (fetched from its
+    own url), not just the provider's short summary -- falls back to that
+    summary for whichever articles the fetch fails on (paywalled, blocked,
+    slow), rather than dropping them.
+    """
     try:
         articles = fetch_news(tickers, limit=limit)
     except NewsError as e:
@@ -146,11 +176,12 @@ def run_news_tool(tickers, limit=5):
     if not articles:
         return "no recent news found", []
 
+    bodies = _fetch_bodies([a.link for a in articles])
     blocks = [
-        "date: %s\ntitle: %s\nurl: %s\nsummary: %s" % (
-            (a.date or "")[:10], a.title, a.link, a.summary,
+        "date: %s\ntitle: %s\nurl: %s\ntext: %s" % (
+            (a.date or "")[:10], a.title, a.link, body or a.summary,
         )
-        for a in articles
+        for a, body in zip(articles, bodies)
     ]
     return "\n---\n".join(blocks), articles
 
@@ -169,7 +200,9 @@ def get_stock_news(tickers: list[str], limit: int = 5) -> str:
 
 def run_geo_news_tool(query, limit=5):
     """Fetch world/geopolitical news and render it as tool-result text;
-    also return the GeoArticles."""
+    also return the GeoArticles. Same full-text-per-article behavior as
+    run_news_tool -- see its docstring.
+    """
     try:
         articles = fetch_geo_news(query, limit=limit)
     except WebzError as e:
@@ -178,11 +211,13 @@ def run_geo_news_tool(query, limit=5):
     if not articles:
         return "no relevant world news found", []
 
+    bodies = _fetch_bodies([a.link for a in articles])
     blocks = [
-        "date: %s\ncountry: %s\nsentiment: %s\ntitle: %s\nurl: %s\nsummary: %s" % (
-            (a.date or "")[:10], a.country or "?", a.sentiment or "?", a.title, a.link, a.summary,
+        "date: %s\ncountry: %s\nsentiment: %s\ntitle: %s\nurl: %s\ntext: %s" % (
+            (a.date or "")[:10], a.country or "?", a.sentiment or "?", a.title, a.link,
+            body or a.summary,
         )
-        for a in articles
+        for a, body in zip(articles, bodies)
     ]
     return "\n---\n".join(blocks), articles
 

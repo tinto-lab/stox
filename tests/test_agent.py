@@ -70,7 +70,8 @@ def test_get_stock_quote_tool_returns_text_only():
 
 
 def test_run_news_tool_formats_headlines():
-    with patch("stoxlib.tools.fetch_news", return_value=[_article()]):
+    with patch("stoxlib.tools.fetch_news", return_value=[_article()]), \
+         patch("stoxlib.tools.fetch_article_text", return_value="Full article body."):
         text, articles = agent.run_news_tool(["AAPL"])
 
     assert "Apple hits new high" in text
@@ -80,10 +81,35 @@ def test_run_news_tool_formats_headlines():
 def test_run_news_tool_output_includes_the_article_url():
     """Regression: read_article is useless if the model never sees a url
     to pass it -- the news tool's text must include each article's link."""
-    with patch("stoxlib.tools.fetch_news", return_value=[_article()]):
+    with patch("stoxlib.tools.fetch_news", return_value=[_article()]), \
+         patch("stoxlib.tools.fetch_article_text", return_value="Full article body."):
         text, _ = agent.run_news_tool(["AAPL"])
 
     assert "https://example.com/a" in text
+
+
+def test_run_news_tool_includes_each_article_s_full_text():
+    """The point of fetching full text automatically: the model shouldn't
+    have to spend a separate read_article call to see more than the
+    provider's short summary."""
+    with patch("stoxlib.tools.fetch_news", return_value=[_article()]), \
+         patch("stoxlib.tools.fetch_article_text", return_value="Full article body.") as mock_fetch:
+        text, _ = agent.run_news_tool(["AAPL"])
+
+    mock_fetch.assert_called_once_with("https://example.com/a")
+    assert "Full article body." in text
+    assert "Some summary." not in text
+
+
+def test_run_news_tool_falls_back_to_the_short_summary_if_full_text_fails():
+    """A paywalled or blocked article shouldn't drop out of the results --
+    it should just fall back to the provider's own summary."""
+    with patch("stoxlib.tools.fetch_news", return_value=[_article()]), \
+         patch("stoxlib.tools.fetch_article_text", side_effect=FetchError("blocked")):
+        text, articles = agent.run_news_tool(["AAPL"])
+
+    assert "Some summary." in text
+    assert articles == [_article()]
 
 
 def test_run_news_tool_reports_no_results():
@@ -103,18 +129,39 @@ def test_run_news_tool_surfaces_news_error():
 
 
 def test_get_stock_news_tool_returns_text_only():
-    with patch("stoxlib.tools.fetch_news", return_value=[_article()]):
+    with patch("stoxlib.tools.fetch_news", return_value=[_article()]), \
+         patch("stoxlib.tools.fetch_article_text", return_value="Full article body."):
         result = agent.get_stock_news.invoke({"tickers": ["AAPL"]})
 
     assert "Apple hits new high" in result
 
 
 def test_run_geo_news_tool_formats_headlines():
-    with patch("stoxlib.tools.fetch_geo_news", return_value=[_geo_article()]):
+    with patch("stoxlib.tools.fetch_geo_news", return_value=[_geo_article()]), \
+         patch("stoxlib.tools.fetch_article_text", return_value="Full article body."):
         text, articles = agent.run_geo_news_tool("Taiwan chip export controls")
 
     assert "Taiwan tightens chip export rules" in text
     assert "https://example.com/g" in text
+    assert articles == [_geo_article()]
+
+
+def test_run_geo_news_tool_includes_each_article_s_full_text():
+    with patch("stoxlib.tools.fetch_geo_news", return_value=[_geo_article()]), \
+         patch("stoxlib.tools.fetch_article_text", return_value="Full article body.") as mock_fetch:
+        text, _ = agent.run_geo_news_tool("Taiwan chip export controls")
+
+    mock_fetch.assert_called_once_with("https://example.com/g")
+    assert "Full article body." in text
+    assert "Some summary." not in text
+
+
+def test_run_geo_news_tool_falls_back_to_the_short_summary_if_full_text_fails():
+    with patch("stoxlib.tools.fetch_geo_news", return_value=[_geo_article()]), \
+         patch("stoxlib.tools.fetch_article_text", side_effect=FetchError("blocked")):
+        text, articles = agent.run_geo_news_tool("Taiwan chip export controls")
+
+    assert "Some summary." in text
     assert articles == [_geo_article()]
 
 
@@ -135,7 +182,8 @@ def test_run_geo_news_tool_surfaces_webz_error():
 
 
 def test_get_geopolitical_news_tool_returns_text_only():
-    with patch("stoxlib.tools.fetch_geo_news", return_value=[_geo_article()]):
+    with patch("stoxlib.tools.fetch_geo_news", return_value=[_geo_article()]), \
+         patch("stoxlib.tools.fetch_article_text", return_value="Full article body."):
         result = agent.get_geopolitical_news.invoke({"query": "Taiwan chip export controls"})
 
     assert "Taiwan tightens chip export rules" in result
@@ -318,7 +366,8 @@ def test_ask_agent_calls_on_tool_call_before_running_each_tool():
     ])
     seen = []
     with patch("stoxlib.tools.fetch_quotes", return_value=([_quote()], [])), \
-         patch("stoxlib.tools.fetch_news", return_value=[_article()]):
+         patch("stoxlib.tools.fetch_news", return_value=[_article()]), \
+         patch("stoxlib.tools.fetch_article_text", return_value="Full article body."):
         agent.ask_agent("what is apple doing and any news?", llm=llm,
                          on_tool_call=lambda name, args: seen.append((name, args)))
 
@@ -345,7 +394,8 @@ def test_ask_agent_executes_news_tool_then_answers():
         ]),
         AIMessage(content="Apple's in the news today.", tool_calls=[]),
     ])
-    with patch("stoxlib.tools.fetch_news", return_value=[_article()]):
+    with patch("stoxlib.tools.fetch_news", return_value=[_article()]), \
+         patch("stoxlib.tools.fetch_article_text", return_value="Full article body."):
         result = agent.ask_agent("any news on apple?", llm=llm)
 
     assert result.error is None
@@ -362,7 +412,8 @@ def test_ask_agent_executes_geo_news_tool_then_answers():
         ]),
         AIMessage(content="Export controls could pressure chipmakers.", tool_calls=[]),
     ])
-    with patch("stoxlib.tools.fetch_geo_news", return_value=[_geo_article()]):
+    with patch("stoxlib.tools.fetch_geo_news", return_value=[_geo_article()]), \
+         patch("stoxlib.tools.fetch_article_text", return_value="Full article body."):
         result = agent.ask_agent("how do export controls affect chip stocks?", llm=llm)
 
     assert result.error is None
@@ -446,7 +497,8 @@ def test_ask_agent_can_call_both_tools_in_one_turn():
         AIMessage(content="Apple is up, and here's what's going on.", tool_calls=[]),
     ])
     with patch("stoxlib.tools.fetch_quotes", return_value=([_quote()], [])), \
-         patch("stoxlib.tools.fetch_news", return_value=[_article()]):
+         patch("stoxlib.tools.fetch_news", return_value=[_article()]), \
+         patch("stoxlib.tools.fetch_article_text", return_value="Full article body."):
         result = agent.ask_agent("what is apple doing and any news?", llm=llm)
 
     assert result.error is None
@@ -468,7 +520,10 @@ def test_ask_agent_reads_article_after_getting_its_url_from_news():
          patch("stoxlib.tools.fetch_article_text", return_value="full article text") as mock_fetch:
         result = agent.ask_agent("what does the apple article say in detail?", llm=llm)
 
-    mock_fetch.assert_called_once_with("https://example.com/a")
+    # get_stock_news already fetches full text for every article automatically,
+    # so read_article's explicit call is a second fetch of the same url, not
+    # the only one -- assert_any_call rather than assert_called_once_with.
+    mock_fetch.assert_any_call("https://example.com/a")
     assert result.error is None
     assert result.text == "Here's the detail from the full article."
 
@@ -487,7 +542,9 @@ def test_ask_agent_reads_article_after_getting_its_url_from_geo_news():
          patch("stoxlib.tools.fetch_article_text", return_value="full article text") as mock_fetch:
         result = agent.ask_agent("what does that article say in detail?", llm=llm)
 
-    mock_fetch.assert_called_once_with("https://example.com/g")
+    # same reasoning as the news version above: get_geopolitical_news
+    # already fetched this url once automatically.
+    mock_fetch.assert_any_call("https://example.com/g")
     assert result.error is None
     assert result.text == "Here's the detail from the full article."
 
