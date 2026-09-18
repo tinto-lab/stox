@@ -8,6 +8,7 @@ from stoxlib.fundamentals import Fundamentals
 from stoxlib.history import Bar
 from stoxlib.news import Article
 from stoxlib.quotes import Quote
+from stoxlib.webz import GeoArticle
 
 
 def _quote(**overrides):
@@ -44,10 +45,12 @@ def _fundamentals(**overrides):
 
 class _FakeAnalysisResult:
     def __init__(self, trend_text="Trending up.", fundamentals_text="Solid margins.",
-                 news_text="Quiet week.", verdict_text="Low risk, favorable lean."):
+                 news_text="Quiet week.", geopolitics_text="Limited exposure abroad.",
+                 verdict_text="Low risk, favorable lean."):
         self.trend_text = trend_text
         self.fundamentals_text = fundamentals_text
         self.news_text = news_text
+        self.geopolitics_text = geopolitics_text
         self.verdict_text = verdict_text
 
 
@@ -59,6 +62,16 @@ def _article(**overrides):
     )
     defaults.update(overrides)
     return Article(**defaults)
+
+
+def _geo_article(**overrides):
+    defaults = dict(
+        title="Taiwan tightens chip export rules", date="2026-01-01T12:00:00+00:00",
+        link="https://example.com/g", country="TW",
+        sentiment="negative", summary="Some summary.",
+    )
+    defaults.update(overrides)
+    return GeoArticle(**defaults)
 
 
 @pytest.mark.parametrize("change, expected_color", [(1.0, "green"), (-1.0, "red"), (0.0, "white")])
@@ -132,13 +145,14 @@ def test_show_fundamentals_handles_missing_fields():
     assert "n/a" in console.export_text()
 
 
-def test_show_analysis_includes_all_four_texts():
+def test_show_analysis_includes_all_five_texts():
     console = _capturing_console()
     rendering.show_analysis(console, _FakeAnalysisResult())
     output = console.export_text()
     assert "Trending up." in output
     assert "Solid margins." in output
     assert "Quiet week." in output
+    assert "Limited exposure abroad." in output
     assert "Low risk, favorable lean." in output
     assert "not financial advice" in output
 
@@ -146,6 +160,35 @@ def test_show_analysis_includes_all_four_texts():
 def test_show_analysis_does_not_let_verdict_be_parsed_as_markup():
     console = _capturing_console()
     rendering.show_analysis(console, _FakeAnalysisResult(verdict_text="[bold red]not a tag[/]"))
+    assert "[bold red]not a tag[/]" in console.export_text()
+
+
+@pytest.mark.parametrize("sentiment, expected_color", [
+    ("positive", "green"), ("negative", "red"), ("neutral", "white"), (None, "white"),
+])
+def test_geo_sentiment_arrow(sentiment, expected_color):
+    _, color = rendering._geo_sentiment_arrow(sentiment)
+    assert color == expected_color
+
+
+def test_show_geo_news_includes_title_country_and_link():
+    console = _capturing_console()
+    rendering.show_geo_news(console, [_geo_article()])
+    output = console.export_text()
+    assert "Taiwan tightens chip export rules" in output
+    assert "TW" in output
+    assert "https://example.com/g" in output
+
+
+def test_show_geo_news_handles_empty_list():
+    console = _capturing_console()
+    rendering.show_geo_news(console, [])
+    assert "no relevant world news" in console.export_text()
+
+
+def test_show_geo_news_does_not_let_title_be_parsed_as_markup():
+    console = _capturing_console()
+    rendering.show_geo_news(console, [_geo_article(title="[bold red]not a tag[/]")])
     assert "[bold red]not a tag[/]" in console.export_text()
 
 

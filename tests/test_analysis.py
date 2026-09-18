@@ -8,6 +8,7 @@ from stoxlib.fundamentals import Fundamentals
 from stoxlib.history import Bar
 from stoxlib.news import Article
 from stoxlib.quotes import Quote
+from stoxlib.webz import GeoArticle
 
 
 def _quote(code="AAPL.US"):
@@ -25,6 +26,12 @@ def _article(title="Apple hits new high"):
 def _bar(code="AAPL.US", date="2026-01-01", close=227.14):
     return Bar(code=code, date=date, open_=225.0, high=228.0, low=224.5,
                close=close, volume=50_000_000)
+
+
+def _geo_article(title="Taiwan tightens chip export rules"):
+    return GeoArticle(title=title, date="2026-01-01T12:00:00+00:00",
+                       link="https://example.com/g", country="TW",
+                       sentiment="negative", summary="Some summary.")
 
 
 def _fundamentals(code="AAPL.US"):
@@ -133,6 +140,73 @@ def test_run_news_agent_refuses_to_read_an_unknown_url():
     assert text == "done"
 
 
+def test_run_geopolitics_agent_calls_tool_and_returns_text():
+    llm = _FakeLLM([
+        AIMessage(content="", tool_calls=[
+            {"name": "get_geopolitical_news",
+             "args": {"query": "Taiwan chip export controls"}, "id": "call1"},
+        ]),
+        AIMessage(content="Export controls could pressure supply.", tool_calls=[]),
+    ])
+    with patch("stoxlib.analysis.run_geo_news_tool", return_value=("geo", [_geo_article()])):
+        text, articles = analysis._run_geopolitics_agent(llm, "AAPL")
+
+    assert text == "Export controls could pressure supply."
+    assert articles == [_geo_article()]
+
+
+def test_run_geopolitics_agent_reads_article_after_getting_its_url():
+    llm = _FakeLLM([
+        AIMessage(content="", tool_calls=[
+            {"name": "get_geopolitical_news", "args": {"query": "Taiwan tariffs"}, "id": "call1"},
+        ]),
+        AIMessage(content="", tool_calls=[
+            {"name": "read_article", "args": {"url": "https://example.com/g"}, "id": "call2"},
+        ]),
+        AIMessage(content="Detailed take using the full article.", tool_calls=[]),
+    ])
+    with patch("stoxlib.analysis.run_geo_news_tool", return_value=("geo", [_geo_article()])), \
+         patch("stoxlib.analysis.run_read_article_tool", return_value="full text") as mock_fetch:
+        text, _ = analysis._run_geopolitics_agent(llm, "AAPL")
+
+    mock_fetch.assert_called_once_with("https://example.com/g")
+    assert text == "Detailed take using the full article."
+
+
+def test_run_geopolitics_agent_refuses_to_read_an_unknown_url():
+    llm = _FakeLLM([
+        AIMessage(content="", tool_calls=[
+            {"name": "read_article", "args": {"url": "https://evil.example/x"}, "id": "call1"},
+        ]),
+        AIMessage(content="done", tool_calls=[]),
+    ])
+    with patch("stoxlib.analysis.run_read_article_tool") as mock_fetch:
+        text, _ = analysis._run_geopolitics_agent(llm, "AAPL")
+
+    mock_fetch.assert_not_called()
+    assert text == "done"
+
+
+def test_run_geopolitics_agent_caps_searches_per_run():
+    """The system prompt tells the model to search from more than one
+    angle, so the loop itself -- not just the wording -- must stop it from
+    turning that into unbounded, separately-billed webz.io calls."""
+    llm = _FakeLLM(
+        [
+            AIMessage(content="", tool_calls=[
+                {"name": "get_geopolitical_news", "args": {"query": "angle %d" % i}, "id": "c%d" % i},
+            ])
+            for i in range(analysis.MAX_GEO_SEARCHES + 2)
+        ]
+        + [AIMessage(content="done", tool_calls=[])]
+    )
+    with patch("stoxlib.analysis.run_geo_news_tool",
+               return_value=("geo", [_geo_article()])) as mock_tool:
+        analysis._run_geopolitics_agent(llm, "AAPL")
+
+    assert mock_tool.call_count == analysis.MAX_GEO_SEARCHES
+
+
 def test_run_specialist_forces_a_final_answer_after_max_tool_rounds():
     """A model that spends every round on a tool call (e.g. reading several
     articles one at a time) must still end up with a real answer, not a
@@ -168,49 +242,54 @@ def test_aggregator_system_prompt_appends_stored_considerations():
     assert "always factor in insider selling" in prompt
 
 
-def test_run_aggregator_sends_all_three_analyses_and_returns_verdict():
+def test_run_aggregator_sends_all_four_analyses_and_returns_verdict():
     llm = _FakeLLM([AIMessage(content="Low risk, favorable lean.", tool_calls=[])])
 
-    text = analysis._run_aggregator(llm, "AAPL", "trend text", "fundamentals text", "news text")
+    text = analysis._run_aggregator(
+        llm, "AAPL", "trend text", "fundamentals text", "news text", "geopolitics text")
 
     assert text == "Low risk, favorable lean."
     sent_prompt = llm.received_messages[0][1].content
     assert "trend text" in sent_prompt
     assert "fundamentals text" in sent_prompt
     assert "news text" in sent_prompt
+    assert "geopolitics text" in sent_prompt
     assert "AAPL" in sent_prompt
 
 
 # -- orchestration ------------------------------------------------------
 
-def test_run_stock_analysis_runs_all_four_agents_in_order():
+def test_run_stock_analysis_runs_all_five_agents_in_order():
     seen = []
     with patch("stoxlib.analysis._run_trend_agent", return_value=("trend", [_quote()], [_bar()])), \
          patch("stoxlib.analysis._run_fundamentals_agent", return_value=("fund", _fundamentals())), \
          patch("stoxlib.analysis._run_news_agent", return_value=("news", [_article()])), \
+         patch("stoxlib.analysis._run_geopolitics_agent", return_value=("geo", [_geo_article()])), \
          patch("stoxlib.analysis._run_aggregator", return_value="verdict"):
         result = analysis.run_stock_analysis(
             "AAPL", llm=Mock(), on_agent_start=seen.append,
         )
 
-    assert seen == ["trend", "fundamentals", "news", "aggregator"]
+    assert seen == ["trend", "fundamentals", "news", "geopolitics", "aggregator"]
     assert result.error is None
     assert result.ticker == "AAPL"
     assert result.trend_text == "trend"
     assert result.fundamentals_text == "fund"
     assert result.news_text == "news"
+    assert result.geopolitics_text == "geo"
     assert result.verdict_text == "verdict"
     assert result.quotes == [_quote()]
     assert result.bars == [_bar()]
     assert result.articles == [_article()]
+    assert result.geo_articles == [_geo_article()]
     assert result.fundamentals == _fundamentals()
 
 
 def test_run_stock_analysis_runs_specialists_concurrently():
-    """trend/fundamentals/news hit independent data sources and don't
-    depend on each other's output, so they should overlap in wall time
-    instead of summing -- each sleeps briefly and records when it ran;
-    if they were sequential the total would be roughly 3x one sleep."""
+    """trend/fundamentals/news/geopolitics hit independent data sources and
+    don't depend on each other's output, so they should overlap in wall
+    time instead of summing -- each sleeps briefly and records when it ran;
+    if they were sequential the total would be roughly 4x one sleep."""
     import time
 
     def _slow(result, sleep=0.05):
@@ -222,19 +301,20 @@ def test_run_stock_analysis_runs_specialists_concurrently():
     with patch("stoxlib.analysis._run_trend_agent", side_effect=_slow(("trend", [], []))), \
          patch("stoxlib.analysis._run_fundamentals_agent", side_effect=_slow(("fund", None))), \
          patch("stoxlib.analysis._run_news_agent", side_effect=_slow(("news", []))), \
+         patch("stoxlib.analysis._run_geopolitics_agent", side_effect=_slow(("geo", []))), \
          patch("stoxlib.analysis._run_aggregator", return_value="verdict"):
         start = time.time()
         result = analysis.run_stock_analysis("AAPL", llm=Mock())
         elapsed = time.time() - start
 
     assert result.error is None
-    assert elapsed < 0.12  # well under 3x the 0.05s sleep if run sequentially
+    assert elapsed < 0.15  # well under 4x the 0.05s sleep if run sequentially
 
 
 def test_run_stock_analysis_attributes_tool_calls_to_the_right_specialist():
     """on_tool_call for run_stock_analysis carries a leading agent_name
     (unlike agent.ask_agent's plain on_tool_call(name, args)) so a caller
-    can tell which of the three concurrent specialists made a given call."""
+    can tell which of the four concurrent specialists made a given call."""
     seen = []
 
     def _fake_trend(llm, ticker, on_tool_call=None):
@@ -252,9 +332,15 @@ def test_run_stock_analysis_attributes_tool_calls_to_the_right_specialist():
             on_tool_call("get_stock_news", {"tickers": [ticker]})
         return "news", [_article()]
 
+    def _fake_geopolitics(llm, ticker, on_tool_call=None):
+        if on_tool_call:
+            on_tool_call("get_geopolitical_news", {"query": ticker})
+        return "geo", [_geo_article()]
+
     with patch("stoxlib.analysis._run_trend_agent", side_effect=_fake_trend), \
          patch("stoxlib.analysis._run_fundamentals_agent", side_effect=_fake_fundamentals), \
          patch("stoxlib.analysis._run_news_agent", side_effect=_fake_news), \
+         patch("stoxlib.analysis._run_geopolitics_agent", side_effect=_fake_geopolitics), \
          patch("stoxlib.analysis._run_aggregator", return_value="verdict"):
         analysis.run_stock_analysis("AAPL", llm=Mock(), on_tool_call=lambda *a: seen.append(a))
 
@@ -262,6 +348,7 @@ def test_run_stock_analysis_attributes_tool_calls_to_the_right_specialist():
         ("trend", "get_price_history", {"ticker": "AAPL"}),
         ("fundamentals", "get_company_fundamentals", {"ticker": "AAPL"}),
         ("news", "get_stock_news", {"tickers": ["AAPL"]}),
+        ("geopolitics", "get_geopolitical_news", {"query": "AAPL"}),
     ])
 
 
@@ -272,23 +359,24 @@ def test_run_stock_analysis_builds_llm_when_none_given_and_reports_agent_error()
 
 
 def test_run_stock_analysis_wraps_unexpected_exceptions():
-    """The three specialists run concurrently in separate threads, so
-    fundamentals/news are patched too -- otherwise, with only trend mocked
-    to raise, they'd run for real against the Mock() llm in the background
-    (harmlessly discarded once trend's exception wins the race, but not
-    something a test should rely on)."""
+    """The four specialists run concurrently in separate threads, so
+    fundamentals/news/geopolitics are patched too -- otherwise, with only
+    trend mocked to raise, they'd run for real against the Mock() llm in
+    the background (harmlessly discarded once trend's exception wins the
+    race, but not something a test should rely on)."""
     with patch("stoxlib.analysis._run_trend_agent", side_effect=RuntimeError("boom")), \
          patch("stoxlib.analysis._run_fundamentals_agent", return_value=("fund", _fundamentals())), \
-         patch("stoxlib.analysis._run_news_agent", return_value=("news", [_article()])):
+         patch("stoxlib.analysis._run_news_agent", return_value=("news", [_article()])), \
+         patch("stoxlib.analysis._run_geopolitics_agent", return_value=("geo", [_geo_article()])):
         result = analysis.run_stock_analysis("AAPL", llm=Mock())
 
     assert result.error == "analysis error: boom"
 
 
-def test_run_analyze_stock_tool_formats_all_four_sections():
+def test_run_analyze_stock_tool_formats_all_five_sections():
     fake_result = analysis.AnalysisResult(
         ticker="AAPL", trend_text="trend text", fundamentals_text="fund text",
-        news_text="news text", verdict_text="verdict text",
+        news_text="news text", geopolitics_text="geo text", verdict_text="verdict text",
     )
     with patch("stoxlib.analysis.run_stock_analysis", return_value=fake_result):
         text, result = analysis.run_analyze_stock_tool("AAPL")
@@ -296,6 +384,7 @@ def test_run_analyze_stock_tool_formats_all_four_sections():
     assert "trend text" in text
     assert "fund text" in text
     assert "news text" in text
+    assert "geo text" in text
     assert "verdict text" in text
     assert result is fake_result
 

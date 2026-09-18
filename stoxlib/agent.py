@@ -18,9 +18,11 @@ from .considerations import add_consideration, load_considerations
 from .providers import AgentError, build_llm
 from .tool_loop import run_tool_loop
 from .tools import (UNKNOWN_ARTICLE_URL_ERROR, get_company_fundamentals,
-                     get_price_history, get_stock_news, get_stock_quote,
-                     read_article, run_fundamentals_tool, run_history_tool,
-                     run_news_tool, run_quote_tool, run_read_article_tool)
+                     get_geopolitical_news, get_price_history,
+                     get_stock_news, get_stock_quote, read_article,
+                     run_fundamentals_tool, run_geo_news_tool,
+                     run_history_tool, run_news_tool, run_quote_tool,
+                     run_read_article_tool)
 
 AGENT_SYSTEM = (
     "You are stox, a terse terminal research assistant for stocks, crypto, "
@@ -43,13 +45,20 @@ AGENT_SYSTEM = (
     "to cover the period asked about (a month is ~30, 6 months is ~180, a "
     "year is ~365). Call get_company_fundamentals for questions about "
     "profitability, valuation, or financial health (EBITDA, margins, "
-    "revenue growth, P/E, and similar). get_stock_news only returns a "
-    "short summary of each article; if that isn't enough to answer the "
-    "question (you need a specific number, deal term, or other detail it "
-    "doesn't cover), call read_article with the exact url of the most "
-    "relevant article from get_stock_news's results to read its full text "
-    "-- you can only read urls that came from get_stock_news, not urls "
-    "from anywhere else. If the user asks whether to buy or sell "
+    "revenue growth, P/E, and similar). Call get_geopolitical_news for "
+    "questions about tariffs, sanctions, elections, central-bank policy, "
+    "regional conflict, or other macro/geopolitical forces -- it searches "
+    "general world news by free-text query (not a ticker), so think about "
+    "what the question is really about (e.g. \"Taiwan semiconductor export "
+    "controls\" for a chip-supply question) and pass that as the query. "
+    "get_stock_news and get_geopolitical_news already include each "
+    "article's full text, not just a short summary, so you don't normally "
+    "need to fetch further. If a particular article's text couldn't be "
+    "fetched (it falls back to a short summary in that case) and that "
+    "summary isn't enough to answer the question, call read_article with "
+    "the exact url of that article from either tool's results -- you can "
+    "only read urls that came from get_stock_news or get_geopolitical_news, "
+    "not urls from anywhere else. If the user asks whether to buy or sell "
     "something, wants a risk assessment, or asks for a full analysis of a "
     "company, call analyze_stock instead of the individual data tools -- "
     "it runs dedicated trend, fundamentals, and news agents and returns "
@@ -89,6 +98,7 @@ class AgentResult:
     text: str = ""
     quotes: list = field(default_factory=list)
     articles: list = field(default_factory=list)
+    geo_articles: list = field(default_factory=list)
     bars: list = field(default_factory=list)
     fundamentals: object = None
     analysis: object = None
@@ -178,10 +188,11 @@ def ask_agent(query, history=None, llm=None, on_tool_call=None):
     if history is None:
         history = []
 
-    state = {"quotes": [], "articles": [], "bars": [], "fundamentals": None, "analysis": None}
-    # Only urls that get_stock_news actually returned (this turn or an
-    # earlier one still in history) may be read -- the model can't direct
-    # us to fetch an arbitrary url.
+    state = {"quotes": [], "articles": [], "geo_articles": [], "bars": [],
+              "fundamentals": None, "analysis": None}
+    # Only urls that get_stock_news/get_geopolitical_news actually returned
+    # (this turn or an earlier one still in history) may be read -- the
+    # model can't direct us to fetch an arbitrary url.
     known_article_urls = _article_urls_in(history)
 
     def dispatch(name, args):
@@ -193,6 +204,11 @@ def ask_agent(query, history=None, llm=None, on_tool_call=None):
             result_text, articles = run_news_tool(args.get("tickers", []), limit=args.get("limit", 5))
             state["articles"] = articles or state["articles"]
             known_article_urls.update(a.link for a in articles if a.link)
+            return result_text
+        if name == "get_geopolitical_news":
+            result_text, geo_articles = run_geo_news_tool(args.get("query", ""), limit=args.get("limit", 5))
+            state["geo_articles"] = geo_articles or state["geo_articles"]
+            known_article_urls.update(a.link for a in geo_articles if a.link)
             return result_text
         if name == "get_price_history":
             result_text, bars = run_history_tool(args.get("ticker", ""), days=args.get("days", 30))
@@ -209,6 +225,7 @@ def ask_agent(query, history=None, llm=None, on_tool_call=None):
                 state["quotes"] = analysis_result.quotes or state["quotes"]
                 state["bars"] = analysis_result.bars or state["bars"]
                 state["articles"] = analysis_result.articles or state["articles"]
+                state["geo_articles"] = analysis_result.geo_articles or state["geo_articles"]
                 state["fundamentals"] = analysis_result.fundamentals or state["fundamentals"]
             return result_text
         if name == "read_article":
@@ -221,8 +238,8 @@ def ask_agent(query, history=None, llm=None, on_tool_call=None):
         return "unknown tool"
 
     messages = [SystemMessage(content=_build_system_prompt())] + history + [HumanMessage(content=query)]
-    tools = [get_stock_quote, get_stock_news, get_price_history, get_company_fundamentals,
-             analysis.analyze_stock, read_article, remember_consideration]
+    tools = [get_stock_quote, get_stock_news, get_geopolitical_news, get_price_history,
+             get_company_fundamentals, analysis.analyze_stock, read_article, remember_consideration]
 
     try:
         text = run_tool_loop(llm, messages, tools, dispatch, on_tool_call=on_tool_call)
@@ -232,5 +249,5 @@ def ask_agent(query, history=None, llm=None, on_tool_call=None):
     history[:] = messages[1:]  # drop the system message, keep the rest
     _trim_history(history)
     return AgentResult(text=text, quotes=state["quotes"], articles=state["articles"],
-                        bars=state["bars"], fundamentals=state["fundamentals"],
-                        analysis=state["analysis"])
+                        geo_articles=state["geo_articles"], bars=state["bars"],
+                        fundamentals=state["fundamentals"], analysis=state["analysis"])

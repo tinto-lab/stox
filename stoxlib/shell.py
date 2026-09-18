@@ -24,8 +24,9 @@ from .analysis import run_stock_analysis
 from .config import CONFIG_DIR, load_env
 from .considerations import CONSIDERATIONS_FILE, load_considerations
 from .quotes import QuoteError, api_key, fetch_quotes, normalize
-from .rendering import (show_analysis, show_fundamentals, show_news,
-                         show_price_history, show_quote, show_quotes_compact)
+from .rendering import (show_analysis, show_fundamentals, show_geo_news,
+                         show_news, show_price_history, show_quote,
+                         show_quotes_compact)
 
 try:
     import readline
@@ -87,9 +88,10 @@ HELP = """[bold]commands[/]
                     explain price moves also works, to save a standing note
   /price <ticker> [...]  instant quote(s), no LLM involved:
                           AAPL   or   TSLA MSFT NVDA
-  /analyze <ticker>  run trend, fundamentals, and news specialist agents for
-                     one ticker, then an aggregator's risk assessment --
-                     4 LLM calls, slower than a plain question
+  /analyze <ticker>  run trend, fundamentals, news, and geopolitics
+                     specialist agents for one ticker, then an aggregator's
+                     risk assessment -- 5 LLM calls, slower than a plain
+                     question
   /help            this message
   /clear           clear the screen
   /reset           forget the conversation so far (also /new)
@@ -110,6 +112,13 @@ HELP = """[bold]commands[/]
   or a free key from eodhd.com (20 calls/day). Powers quotes, news, and
   price history. Fundamentals (EBITDA, margins, ...) are separate -- via
   Yahoo Finance, free and keyless, no setup needed.
+
+  WEBZ_API_KEY=...    a key from webz.io. Powers get_geopolitical_news and
+                       the /analyze geopolitics agent -- general world-news
+                       search for tariffs, sanctions, elections, and other
+                       macro forces that aren't scoped to one ticker.
+                       Without it, everything else still works; that one
+                       specialist just reports it can't search.
 
   everything except /price needs an LLM provider:
     STOX_LLM_PROVIDER=anthropic|deepseek|openai  (default: anthropic)
@@ -253,12 +262,12 @@ def _print_analysis_tool_call(agent_name, name, args):
         console.print(Text("  ↳ [%s] %s(%s)" % (agent_name, name, params), style="dim"))
 
 
-def _show_result_data(quotes, bars, fundamentals, articles):
-    """Render whatever a quote/history/fundamentals/news fetch came back
-    with. Shared by handle_query (an AgentResult) and handle_analyze (an
-    AnalysisResult) -- both carry these same four fields, just as
-    different result types, so this takes the values directly rather than
-    one object of either type."""
+def _show_result_data(quotes, bars, fundamentals, articles, geo_articles=None):
+    """Render whatever a quote/history/fundamentals/news/geo-news fetch
+    came back with. Shared by handle_query (an AgentResult) and
+    handle_analyze (an AnalysisResult) -- both carry these same fields,
+    just as different result types, so this takes the values directly
+    rather than one object of either type."""
     if len(quotes) == 1:
         show_quote(console, quotes[0])
     elif quotes:
@@ -272,6 +281,9 @@ def _show_result_data(quotes, bars, fundamentals, articles):
 
     if articles:
         show_news(console, articles)
+
+    if geo_articles:
+        show_geo_news(console, geo_articles)
 
 
 def handle_query(text, history):
@@ -291,7 +303,8 @@ def handle_query(text, history):
         console.print(Text(result.text))
 
     console.print()
-    _show_result_data(result.quotes, result.bars, result.fundamentals, result.articles)
+    _show_result_data(result.quotes, result.bars, result.fundamentals, result.articles,
+                       result.geo_articles)
 
     if result.analysis:
         show_analysis(console, result.analysis)
@@ -306,12 +319,12 @@ def _print_agent_start(name):
 
 
 def handle_analyze(ticker):
-    """The /analyze command: run the full trend/fundamentals/news pipeline
-    and the aggregator's risk assessment for one ticker directly, without
-    going through the general chat agent."""
-    console.print("[dim]→ analyzing %s · trend, fundamentals, and news run "
-                   "concurrently, then an aggregator · 4 LLM calls, please "
-                   "wait[/]" % normalize(ticker))
+    """The /analyze command: run the full trend/fundamentals/news/geopolitics
+    pipeline and the aggregator's risk assessment for one ticker directly,
+    without going through the general chat agent."""
+    console.print("[dim]→ analyzing %s · trend, fundamentals, news, and "
+                   "geopolitics run concurrently, then an aggregator · 5 "
+                   "LLM calls, please wait[/]" % normalize(ticker))
     result = run_stock_analysis(ticker, on_agent_start=_print_agent_start,
                                  on_tool_call=_print_analysis_tool_call)
 
@@ -320,7 +333,8 @@ def handle_analyze(ticker):
         return
 
     console.print()
-    _show_result_data(result.quotes, result.bars, result.fundamentals, result.articles)
+    _show_result_data(result.quotes, result.bars, result.fundamentals, result.articles,
+                       result.geo_articles)
     show_analysis(console, result)
 
 

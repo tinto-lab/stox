@@ -11,6 +11,7 @@ stox.py                entry point (`python stox.py`)
 stoxlib/
   quotes.py            EODHD quotes data source — Quote, fetch_quotes
   news.py              EODHD news data source — Article, fetch_news
+  webz.py              webz.io world/geopolitical news — GeoArticle, fetch_geo_news
   webfetch.py          fetches a url and extracts its readable article text
   considerations.py    standing factors the agent always weighs, persisted to disk
   rendering.py         Quote/Article -> rich console output
@@ -30,6 +31,8 @@ Each module has one job; see `stoxlib/__init__.py` for the short version.
 - Python (managed here via pyenv)
 - An EODHD API key — the free `demo` key works for testing, no signup
 - For plain-English questions: an API key for whichever LLM provider you pick
+- Optional: a webz.io API key, for geopolitical/macro news (`get_geopolitical_news`
+  and the `/analyze` geopolitics agent) — everything else works without it
 
 ## Setup
 
@@ -123,8 +126,16 @@ one(s) a question needs. `get_stock_news` only returns a short summary
 of each article; when that's not enough (e.g. "what does the article say
 about the deal terms?"), the agent can call a third tool, `read_article`,
 to fetch and read one article's full text — but only for a url that
-`get_stock_news` actually returned in that conversation, never an
-arbitrary url, so the model can't direct stox to fetch anything else.
+`get_stock_news` or `get_geopolitical_news` actually returned in that
+conversation, never an arbitrary url, so the model can't direct stox to
+fetch anything else.
+
+For forces beyond one company — tariffs, sanctions, elections,
+central-bank decisions, regional conflict — the agent can call
+`get_geopolitical_news`, which searches general world news via webz.io
+(needs `WEBZ_API_KEY`) by free-text query instead of a ticker. `/analyze`
+also runs a dedicated geopolitics specialist alongside trend/fundamentals/
+news, folding whatever it finds into the aggregated risk assessment.
 
 Every tool call the model actually makes is printed before its result, so
 it's never a black box which of the three tools ran:
@@ -186,6 +197,7 @@ before every test so a developer's own shell exports can't leak in):
 |-----------------------|------------------------------------------------------------|
 | `test_quotes.py`      | ticker normalization, EODHD response parsing, HTTP/error handling (mocked) |
 | `test_news.py`        | EODHD news parsing/truncation, HTTP/error handling (mocked) |
+| `test_webz.py`        | webz.io geopolitical-news parsing/truncation, HTTP/error handling (mocked) |
 | `test_webfetch.py`    | article text extraction, HTTP/error handling (mocked) |
 | `test_considerations.py` | standing-consideration file parsing, dedup, and persistence |
 | `test_rendering.py`   | quote/news formatting (arrows, colors, volume units, panel/table output) |
@@ -210,5 +222,6 @@ before every test so a developer's own shell exports can't leak in):
 - [x] Full-article reading when a news summary isn't enough (`read_article`)
 - [x] Conversation memory across turns in a session (`/reset` to clear it)
 - [x] Standing considerations that persist across sessions (`remember_consideration`, `/considerations`)
+- [x] Geopolitical/macro news (webz.io, via the `get_geopolitical_news` agent tool and `/analyze`'s geopolitics specialist)
 - [ ] Add fundamentals fetch (financials, ratios — also where company names live)
 - [ ] CI (run `pytest` on push)

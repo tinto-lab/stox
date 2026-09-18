@@ -284,7 +284,8 @@ def test_handle_query_shows_tool_calls_end_to_end(test_console):
         AIMessage(content="Tesla has some news today.", tool_calls=[]),
     ])
     with patch("stoxlib.agent.build_llm", return_value=llm), \
-         patch("stoxlib.tools.fetch_news", return_value=[_article(title="Tesla news")]):
+         patch("stoxlib.tools.fetch_news", return_value=[_article(title="Tesla news")]), \
+         patch("stoxlib.tools.fetch_article_text", return_value="Full article body."):
         shell.handle_query("any news on tesla?", [])
 
     output = test_console.export_text()
@@ -307,6 +308,24 @@ def test_handle_query_shows_news(test_console):
     assert "Here's the latest." in output
     assert "Apple hits new high" in output
     assert "https://example.com/a" in output
+
+
+def _geo_article(title="Taiwan tightens chip export rules"):
+    from stoxlib.webz import GeoArticle
+    return GeoArticle(title=title, date="2026-01-01T12:00:00+00:00",
+                       link="https://example.com/g", country="TW",
+                       sentiment="negative", summary="Some summary.")
+
+
+def test_handle_query_shows_geo_news(test_console):
+    result = AgentResult(text="Export controls could pressure chipmakers.",
+                          geo_articles=[_geo_article()])
+    with patch("stoxlib.agent.ask_agent", return_value=result):
+        shell.handle_query("how do export controls affect chip stocks?", [])
+    output = test_console.export_text()
+    assert "Export controls could pressure chipmakers." in output
+    assert "Taiwan tightens chip export rules" in output
+    assert "https://example.com/g" in output
 
 
 def test_main_routes_bare_ticker_input_to_the_agent(test_console, monkeypatch):
