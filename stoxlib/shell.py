@@ -84,7 +84,7 @@ HELP = """[bold]commands[/]
                       should I buy apple? / assess the risk -> full /analyze
                     the agent remembers this session -- follow-ups like
                     "what about its news?" and "read that first one in
-                    full" work; always factor in insider selling when you
+                    full" work, /analyze results included; always factor in insider selling when you
                     explain price moves also works, to save a standing note
   /price <ticker> [...]  instant quote(s), no LLM involved:
                           AAPL   or   TSLA MSFT NVDA
@@ -207,7 +207,7 @@ def handle_command(cmd, history):
         if not ticker:
             console.print("[red]usage:[/] /analyze <ticker>")
         else:
-            handle_analyze(ticker[0])
+            handle_analyze(ticker[0], history)
     elif word == "/price":
         if not rest.strip():
             console.print("[red]usage:[/] /price <ticker> [...]")
@@ -293,7 +293,9 @@ def handle_query(text, history):
     its news?" resolve; ask_agent updates it in place.
     """
     console.print("[dim]→ agent (%s) · %s[/]" % (providers.describe_current(), text))
-    result = agent.ask_agent(text, history=history, on_tool_call=_print_tool_call)
+    result = agent.ask_agent(text, history=history, on_tool_call=_print_tool_call,
+                             on_analysis_agent_start=_print_agent_start,
+                             on_analysis_tool_call=_print_analysis_tool_call)
 
     if result.error:
         console.print("[red]✗[/] %s" % result.error)
@@ -318,10 +320,15 @@ def _print_agent_start(name):
     console.print(Text("→ %s agent" % name, style="dim"))
 
 
-def handle_analyze(ticker):
+def handle_analyze(ticker, history=None):
     """The /analyze command: run the full trend/fundamentals/news/geopolitics
     pipeline and the aggregator's risk assessment for one ticker directly,
-    without going through the general chat agent."""
+    without going through the general chat agent.
+
+    On success the result is recorded into `history` (the same list
+    handle_query passes to the agent), so follow-up questions can refer to
+    it. A failed run is left out, same as a failed ask_agent turn.
+    """
     console.print("[dim]→ analyzing %s · trend, fundamentals, news, and "
                    "geopolitics run concurrently, then an aggregator · 5 "
                    "LLM calls, please wait[/]" % normalize(ticker))
@@ -336,6 +343,9 @@ def handle_analyze(ticker):
     _show_result_data(result.quotes, result.bars, result.fundamentals, result.articles,
                        result.geo_articles)
     show_analysis(console, result)
+
+    if history is not None:
+        agent.record_analysis(history, normalize(ticker), result)
 
 
 def main():

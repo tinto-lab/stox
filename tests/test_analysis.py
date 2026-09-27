@@ -1,7 +1,7 @@
 from unittest.mock import Mock, patch
 
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 
 from stoxlib import analysis, considerations
 from stoxlib.fundamentals import Fundamentals
@@ -188,9 +188,9 @@ def test_run_geopolitics_agent_refuses_to_read_an_unknown_url():
 
 
 def test_run_geopolitics_agent_caps_searches_per_run():
-    """The system prompt tells the model to search from more than one
-    angle, so the loop itself -- not just the wording -- must stop it from
-    turning that into unbounded, separately-billed webz.io calls."""
+    """The system prompt states the budget, but the loop itself -- not just
+    the wording -- must stop the model from turning several angles into
+    unbounded, separately-billed webz.io calls."""
     llm = _FakeLLM(
         [
             AIMessage(content="", tool_calls=[
@@ -205,6 +205,30 @@ def test_run_geopolitics_agent_caps_searches_per_run():
         analysis._run_geopolitics_agent(llm, "AAPL")
 
     assert mock_tool.call_count == analysis.MAX_GEO_SEARCHES
+
+
+def test_run_geopolitics_agent_caps_parallel_searches_in_one_round():
+    """Several searches in a single response count against the same
+    budget, and the over-budget ones get the budget notice instead."""
+    llm = _FakeLLM([
+        AIMessage(content="", tool_calls=[
+            {"name": "get_geopolitical_news", "args": {"query": "angle %d" % i}, "id": "c%d" % i}
+            for i in range(analysis.MAX_GEO_SEARCHES + 2)
+        ]),
+        AIMessage(content="done", tool_calls=[]),
+    ])
+    with patch("stoxlib.analysis.run_geo_news_tool",
+               return_value=("geo", [_geo_article()])) as mock_tool:
+        analysis._run_geopolitics_agent(llm, "AAPL")
+
+    assert mock_tool.call_count == analysis.MAX_GEO_SEARCHES
+    tool_results = [m.content for m in llm.received_messages[-1] if isinstance(m, ToolMessage)]
+    skipped = tool_results[analysis.MAX_GEO_SEARCHES:]
+    assert skipped == [analysis._GEO_SEARCH_BUDGET_NOTICE] * 2
+
+
+def test_geopolitics_prompt_states_the_search_budget():
+    assert "budget of %d searches" % analysis.MAX_GEO_SEARCHES in analysis.GEOPOLITICS_AGENT_SYSTEM
 
 
 def test_run_specialist_forces_a_final_answer_after_max_tool_rounds():
@@ -387,6 +411,15 @@ def test_run_analyze_stock_tool_formats_all_five_sections():
     assert "geo text" in text
     assert "verdict text" in text
     assert result is fake_result
+
+
+def test_format_analysis_for_agent_lists_source_urls():
+    result = analysis.AnalysisResult(ticker="AAPL", articles=[_article()],
+                                     geo_articles=[_geo_article()])
+    text = analysis.format_analysis_for_agent(result)
+
+    assert "url: https://example.com/a" in text
+    assert "url: https://example.com/g" in text
 
 
 def test_run_analyze_stock_tool_surfaces_error_and_returns_no_result():

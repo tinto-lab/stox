@@ -145,9 +145,10 @@ def test_handle_command_price_is_llm_free(test_console):
 
 
 def test_handle_command_analyze_dispatches_to_handle_analyze(test_console):
+    history = []
     with patch.object(shell, "handle_analyze") as mock_handle_analyze:
-        shell.handle_command("/analyze AAPL", [])
-    mock_handle_analyze.assert_called_once_with("AAPL")
+        shell.handle_command("/analyze AAPL", history)
+    mock_handle_analyze.assert_called_once_with("AAPL", history)
 
 
 def test_handle_command_analyze_without_a_ticker_shows_usage(test_console):
@@ -170,6 +171,29 @@ def test_handle_analyze_passes_the_analysis_callbacks(test_console):
 
     assert mock_run.call_args.kwargs["on_agent_start"] is shell._print_agent_start
     assert mock_run.call_args.kwargs["on_tool_call"] is shell._print_analysis_tool_call
+
+
+def test_handle_analyze_records_a_successful_run_into_history(test_console):
+    from stoxlib.analysis import AnalysisResult
+
+    history = []
+    with patch("stoxlib.shell.run_stock_analysis",
+               return_value=AnalysisResult(ticker="AAPL", verdict_text="high risk")):
+        shell.handle_analyze("AAPL", history)
+
+    assert history[0].content == "/analyze AAPL.US"
+    assert any("high risk" in m.content for m in history)
+
+
+def test_handle_analyze_leaves_history_untouched_on_error(test_console):
+    from stoxlib.analysis import AnalysisResult
+
+    history = []
+    with patch("stoxlib.shell.run_stock_analysis",
+               return_value=AnalysisResult(ticker="AAPL", error="boom")):
+        shell.handle_analyze("AAPL", history)
+
+    assert history == []
 
 
 def test_print_analysis_tool_call_shows_agent_name_and_args(test_console):
@@ -245,6 +269,17 @@ def test_handle_query_passes_the_tool_call_callback_to_the_agent():
     with patch("stoxlib.agent.ask_agent", return_value=result) as mock_ask:
         shell.handle_query("any news on apple?", [])
     assert mock_ask.call_args.kwargs["on_tool_call"] is shell._print_tool_call
+
+
+def test_handle_query_passes_the_analysis_callbacks_to_the_agent():
+    """When the agent itself calls analyze_stock, the specialists' progress
+    must print the same way it does under /analyze -- with the
+    thread-safe, agent-name-prefixed printer."""
+    result = AgentResult(text="ok")
+    with patch("stoxlib.agent.ask_agent", return_value=result) as mock_ask:
+        shell.handle_query("should I buy apple?", [])
+    assert mock_ask.call_args.kwargs["on_analysis_agent_start"] is shell._print_agent_start
+    assert mock_ask.call_args.kwargs["on_analysis_tool_call"] is shell._print_analysis_tool_call
 
 
 def test_print_tool_call_shows_name_and_args(test_console):

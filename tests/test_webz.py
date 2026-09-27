@@ -82,8 +82,24 @@ def test_fetch_geo_news_parses_posts_response(monkeypatch):
     assert len(articles) == 1
     assert articles[0].title == "Taiwan tightens chip export rules"
     called_params = mock_get.call_args.kwargs["params"]
-    assert called_params["q"] == "Taiwan chip export controls"
+    assert called_params["q"] == "(Taiwan chip export controls) %s" % webz._QUERY_FILTERS
     assert called_params["token"] == "demo"
+
+
+def test_fetch_geo_news_asks_for_relevant_recent_results(monkeypatch):
+    """webz's defaults (sort=crawled, 3-day window) return whatever was
+    crawled last rather than the best matches -- override both."""
+    monkeypatch.setenv("WEBZ_API_KEY", "demo")
+    response = Mock(status_code=200)
+    response.json.return_value = {"posts": []}
+    with patch("stoxlib.webz.requests.get", return_value=response) as mock_get, \
+         patch("stoxlib.webz.time.time", return_value=1_000_000_000.0):
+        webz.fetch_geo_news("tariffs OR sanctions")
+
+    params = mock_get.call_args.kwargs["params"]
+    assert params["sort"] == "relevancy"
+    assert params["ts"] == int((1_000_000_000.0 - webz._LOOKBACK_DAYS * 86400) * 1000)
+    assert params["q"] == "(tariffs OR sanctions) language:english domain_rank:<10000"
 
 
 def test_fetch_geo_news_sends_size_matching_limit(monkeypatch):
