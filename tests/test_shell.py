@@ -346,7 +346,7 @@ def test_handle_query_shows_news(test_console):
 
 
 def _geo_article(title="Taiwan tightens chip export rules"):
-    from stoxlib.webz import GeoArticle
+    from stoxlib.gnews import GeoArticle
     return GeoArticle(title=title, date="2026-01-01T12:00:00+00:00",
                        link="https://example.com/g", country="TW",
                        sentiment="negative", summary="Some summary.")

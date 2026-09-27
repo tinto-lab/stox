@@ -107,7 +107,6 @@ export interface ConsiderationsData {
 
 export interface StatusData {
   eodhd_key: boolean
-  webz_key: boolean
   provider: string
   model: string
   provider_key_present: boolean

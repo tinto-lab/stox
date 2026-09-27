@@ -201,8 +201,9 @@ def show_news(console: Console, articles):
 
 
 def _geo_sentiment_arrow(sentiment):
-    """Like _sentiment_arrow, but for webz.io's plain positive/negative/
-    neutral string instead of EODHD's {"polarity": float} dict."""
+    """Like _sentiment_arrow, but for GeoArticle's plain positive/negative/
+    neutral string instead of EODHD's {"polarity": float} dict. Google
+    News articles carry no sentiment, so they get the neutral dot."""
     s = (sentiment or "").strip().lower()
     if s == "positive":
         return "▲", "green"
@@ -212,7 +213,7 @@ def _geo_sentiment_arrow(sentiment):
 
 
 def show_geo_news(console: Console, articles):
-    """Headline list for world/geopolitical news (webz.io): date, country,
+    """Headline list for world/geopolitical news (Google News): date, country,
     sentiment arrow, title, and link -- the counterpart to show_news for
     GeoArticle instead of Article.
 

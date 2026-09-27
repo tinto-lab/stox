@@ -8,7 +8,7 @@ from stoxlib.fundamentals import Fundamentals
 from stoxlib.history import Bar
 from stoxlib.news import Article
 from stoxlib.quotes import Quote
-from stoxlib.webz import GeoArticle
+from stoxlib.gnews import GeoArticle
 
 
 def _quote(code="AAPL.US"):
@@ -190,7 +190,7 @@ def test_run_geopolitics_agent_refuses_to_read_an_unknown_url():
 def test_run_geopolitics_agent_caps_searches_per_run():
     """The system prompt states the budget, but the loop itself -- not just
     the wording -- must stop the model from turning several angles into
-    unbounded, separately-billed webz.io calls."""
+    unbounded searches (each one several Google News requests)."""
     llm = _FakeLLM(
         [
             AIMessage(content="", tool_calls=[

@@ -111,14 +111,8 @@ HELP = """[bold]commands[/]
                           AMZN.US BTC-USD.CC EURUSD.FOREX
   or a free key from eodhd.com (20 calls/day). Powers quotes, news, and
   price history. Fundamentals (EBITDA, margins, ...) are separate -- via
-  Yahoo Finance, free and keyless, no setup needed.
-
-  WEBZ_API_KEY=...    a key from webz.io. Powers get_geopolitical_news and
-                       the /analyze geopolitics agent -- general world-news
-                       search for tariffs, sanctions, elections, and other
-                       macro forces that aren't scoped to one ticker.
-                       Without it, everything else still works; that one
-                       specialist just reports it can't search.
+  Yahoo Finance, free and keyless, no setup needed. So is world news
+  (get_geopolitical_news, /analyze's geopolitics agent) -- via Google News.
 
   everything except /price needs an LLM provider:
     STOX_LLM_PROVIDER=anthropic|deepseek|openai  (default: anthropic)

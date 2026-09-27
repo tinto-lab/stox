@@ -149,7 +149,7 @@ def test_status_reports_key_presence(monkeypatch):
     events = _run([_cmd(id="1", cmd="status")], monkeypatch)
 
     assert events == [{"id": "1", "type": "result", "data": {
-        "eodhd_key": True, "webz_key": False, "provider": "deepseek",
+        "eodhd_key": True, "provider": "deepseek",
         "model": "deepseek/deepseek-chat", "provider_key_present": True,
     }}]
 

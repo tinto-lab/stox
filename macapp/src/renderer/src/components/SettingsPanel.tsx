@@ -8,8 +8,7 @@ const THEME_LABELS: Record<Theme, string> = { system: 'System', light: 'Light', 
 const CHAT_FIELDS = [
   { key: 'ANTHROPIC_API_KEY', label: 'Anthropic API key' },
   { key: 'DEEPSEEK_API_KEY', label: 'DeepSeek API key' },
-  { key: 'OPENAI_API_KEY', label: 'OpenAI API key' },
-  { key: 'WEBZ_API_KEY', label: 'webz.io API key (geopolitical news, optional)' }
+  { key: 'OPENAI_API_KEY', label: 'OpenAI API key' }
 ] as const
 
 export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {

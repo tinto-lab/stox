@@ -14,7 +14,8 @@ from .history import HistoryError, fetch_history
 from .news import NewsError, fetch_news
 from .quotes import QuoteError, fetch_quotes
 from .webfetch import FetchError, fetch_article_text
-from .webz import WebzError, fetch_geo_news
+from . import gnews
+from .gnews import GNewsError, fetch_geo_news
 from langchain_core.tools import tool
 
 MAX_ARTICLE_FETCH_WORKERS = 5
@@ -30,7 +31,7 @@ def _fetch_bodies(links):
         return []
 
     def _one(link):
-        if not link:
+        if not link or gnews.is_redirect_link(link):
             return None
         try:
             return fetch_article_text(link)
@@ -205,7 +206,7 @@ def run_geo_news_tool(query, limit=5):
     """
     try:
         articles = fetch_geo_news(query, limit=limit)
-    except WebzError as e:
+    except GNewsError as e:
         return "error: %s" % e, []
 
     if not articles:

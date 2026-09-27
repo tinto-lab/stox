@@ -8,7 +8,7 @@ from stoxlib.history import Bar, HistoryError
 from stoxlib.news import Article, NewsError
 from stoxlib.quotes import Quote, QuoteError
 from stoxlib.webfetch import FetchError
-from stoxlib.webz import GeoArticle, WebzError
+from stoxlib.gnews import GeoArticle, GNewsError
 
 
 def _quote(code="AAPL.US"):
@@ -173,11 +173,11 @@ def test_run_geo_news_tool_reports_no_results():
     assert articles == []
 
 
-def test_run_geo_news_tool_surfaces_webz_error():
-    with patch("stoxlib.tools.fetch_geo_news", side_effect=WebzError("access denied")):
+def test_run_geo_news_tool_surfaces_fetch_error():
+    with patch("stoxlib.tools.fetch_geo_news", side_effect=GNewsError("server returned HTTP 503")):
         text, articles = agent.run_geo_news_tool("query")
 
-    assert text == "error: access denied"
+    assert text == "error: server returned HTTP 503"
     assert articles == []
 
 

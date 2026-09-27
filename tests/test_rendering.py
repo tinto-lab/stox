@@ -8,7 +8,7 @@ from stoxlib.fundamentals import Fundamentals
 from stoxlib.history import Bar
 from stoxlib.news import Article
 from stoxlib.quotes import Quote
-from stoxlib.webz import GeoArticle
+from stoxlib.gnews import GeoArticle
 
 
 def _quote(**overrides):

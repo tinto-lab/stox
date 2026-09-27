@@ -127,7 +127,6 @@ def _handle_status(request_id, payload, session):
     provider_key_present = bool(cfg and os.environ.get(cfg["api_key_env"]))
     _emit(request_id, type="result", data={
         "eodhd_key": bool(os.environ.get("EODHD_API_KEY")),
-        "webz_key": bool(os.environ.get("WEBZ_API_KEY")),
         "provider": provider,
         "model": providers.describe_current(),
         "provider_key_present": provider_key_present,

@@ -18,7 +18,7 @@ stox_bridge.py          JSON-lines entry point for the macOS app (`python stox_b
 stoxlib/
   quotes.py            EODHD quotes data source — Quote, fetch_quotes
   news.py              EODHD news data source — Article, fetch_news
-  webz.py              webz.io world/geopolitical news — GeoArticle, fetch_geo_news
+  gnews.py             Google News RSS world/geopolitical news (free, keyless) — GeoArticle, fetch_geo_news
   webfetch.py          fetches a url and extracts its readable article text
   fundamentals.py      company fundamentals (yfinance) — Fundamentals, fetch_fundamentals
   history.py           OHLC price history — Bar, fetch_history
@@ -48,8 +48,6 @@ Each module has one job; see `stoxlib/__init__.py` for the short version.
 - Python (managed here via pyenv)
 - An EODHD API key — the free `demo` key works for testing, no signup
 - For plain-English questions: an API key for whichever LLM provider you pick
-- Optional: a webz.io API key, for geopolitical/macro news (`get_geopolitical_news`
-  and the `/analyze` geopolitics agent) — everything else works without it
 
 ## Setup
 
@@ -149,8 +147,8 @@ fetch anything else.
 
 For forces beyond one company — tariffs, sanctions, elections,
 central-bank decisions, regional conflict — the agent can call
-`get_geopolitical_news`, which searches general world news via webz.io
-(needs `WEBZ_API_KEY`) by free-text query instead of a ticker. `/analyze`
+`get_geopolitical_news`, which searches general world news by free-text
+query instead of a ticker — via Google News RSS (free, no key). `/analyze`
 also runs a dedicated geopolitics specialist alongside trend/fundamentals/
 news, folding whatever it finds into the aggregated risk assessment.
 
@@ -312,7 +310,7 @@ before every test so a developer's own shell exports can't leak in):
 |-----------------------|------------------------------------------------------------|
 | `test_quotes.py`      | ticker normalization, EODHD response parsing, HTTP/error handling (mocked) |
 | `test_news.py`        | EODHD news parsing/truncation, HTTP/error handling (mocked) |
-| `test_webz.py`        | webz.io geopolitical-news parsing/truncation, HTTP/error handling (mocked) |
+| `test_gnews.py`       | Google News RSS parsing, redirect-link decoding, HTTP/error handling (mocked) |
 | `test_webfetch.py`    | article text extraction, HTTP/error handling (mocked) |
 | `test_considerations.py` | standing-consideration file parsing, dedup, and persistence |
 | `test_rendering.py`   | quote/news formatting (arrows, colors, volume units, panel/table output) |
@@ -341,7 +339,7 @@ The macOS app itself (`macapp/`) has its own toolchain (`npm run typecheck`,
 - [x] Full-article reading when a news summary isn't enough (`read_article`)
 - [x] Conversation memory across turns in a session (`/reset` to clear it)
 - [x] Standing considerations that persist across sessions (`remember_consideration`, `/considerations`)
-- [x] Geopolitical/macro news (webz.io, via the `get_geopolitical_news` agent tool and `/analyze`'s geopolitics specialist)
+- [x] Geopolitical/macro news (Google News RSS, via the `get_geopolitical_news` agent tool and `/analyze`'s geopolitics specialist)
 - [x] Add fundamentals fetch (financials, ratios — also where company names live)
 - [ ] CI (run `pytest` on push)
 - [x] Native macOS app (Electron + TypeScript/React) driving the same backend via `stox_bridge.py`
