@@ -31,9 +31,12 @@ stoxlib/
   shell.py              the terminal REPL — routes input, owns the Console, line editing
   bridge.py              the JSON-lines protocol behind stox_bridge.py, for the macOS app
 macapp/                 the native macOS app (Electron + TypeScript/React) — see below
+packaging/stox-backend.spec  PyInstaller build spec, bundles stox_bridge.py for the packaged app
+scripts/build_backend.sh     builds that spec and drops the result in macapp/backend/
 tests/                 pytest suite, one file per stoxlib module (see Testing)
 requirements.txt       pinned runtime dependencies
 requirements-dev.txt   requirements.txt + pytest
+requirements-build.txt requirements.txt + pyinstaller, only for scripts/build_backend.sh
 ```
 
 Each module has one job; see `stoxlib/__init__.py` for the short version.
@@ -229,9 +232,37 @@ so a key set from the app is immediately visible to the CLI too, and
 vice versa.
 
 `npm run typecheck` and `npm run build` (a one-off production build, output
-to `macapp/out/`) are also available; `npm run package:mac` builds a
-double-clickable `.app` but needs the PyInstaller-bundled backend under
-`macapp/backend/stox-backend` first (not yet wired up — see Roadmap).
+to `macapp/out/`) are also available.
+
+### Packaging a standalone `.app`
+
+```bash
+.venv/bin/pip install -r requirements-build.txt   # one time, adds pyinstaller
+cd macapp
+npm run package:mac
+```
+
+This first runs `scripts/build_backend.sh` (PyInstaller, via
+`packaging/stox-backend.spec`) to freeze `stox_bridge.py` and all of
+`stoxlib` into a standalone binary at `macapp/backend/stox-backend/` —
+no system Python or this repo's `.venv` needed to run it — then
+`electron-builder` packages everything into
+`macapp/dist/mac-arm64/Stox.app`. The three LangChain provider packages
+(`langchain_anthropic`/`_deepseek`/`_openai`) are pulled in explicitly in
+the spec file since `providers.build_llm()` imports them by a
+runtime-built string (`importlib.import_module`), which PyInstaller's
+static analysis can't see on its own — see the spec's header comment.
+
+`electron-builder`'s `identity: null` config skips code signing entirely,
+so sign it yourself afterward for smooth local double-clicking without a
+repeated Gatekeeper prompt:
+
+```bash
+codesign --force --deep --sign - macapp/dist/mac-arm64/Stox.app
+```
+
+A paid Apple Developer ID (and notarization) would only be needed to
+distribute the app to other people — out of scope for a personal tool.
 
 ## Testing
 
@@ -281,4 +312,6 @@ The macOS app itself (`macapp/`) has its own toolchain (`npm run typecheck`,
 - [x] Add fundamentals fetch (financials, ratios — also where company names live)
 - [ ] CI (run `pytest` on push)
 - [x] Native macOS app (Electron + TypeScript/React) driving the same backend via `stox_bridge.py`
-- [ ] Package the macOS app into a standalone double-clickable `.app` (PyInstaller-bundled backend, no separate Python/Node setup for the end user)
+- [x] Package the macOS app into a standalone double-clickable `.app` (PyInstaller-bundled backend, `npm run package:mac`)
+- [ ] Custom app icon (currently the default Electron icon)
+- [ ] Apple Developer ID + notarization, if the app is ever distributed beyond local personal use

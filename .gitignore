@@ -14,3 +14,8 @@ macapp/out/
 macapp/dist/
 macapp/backend/
 macapp/*.tsbuildinfo
+
+# PyInstaller build output for the standalone backend (scripts/build_backend.sh
+# regenerates these into macapp/backend/, which is also git-ignored above).
+/build/
+/dist/

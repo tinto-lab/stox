@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "package:mac": "electron-vite build && electron-builder --mac",
+    "build:backend": "../scripts/build_backend.sh",
+    "package:mac": "npm run build:backend && electron-vite build && electron-builder --mac",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json"
   },
   "dependencies": {
