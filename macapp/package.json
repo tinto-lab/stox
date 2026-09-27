@@ -1,0 +1,49 @@
+{
+  "name": "stox-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Native macOS app for stox, talking to the same Python backend the terminal REPL uses.",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "package:mac": "electron-vite build && electron-builder --mac",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json"
+  },
+  "dependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "typescript": "~5.9.3",
+    "vite": "^6.3.6"
+  },
+  "build": {
+    "appId": "com.stox.app",
+    "productName": "Stox",
+    "files": [
+      "out/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "backend/stox-backend",
+        "to": "backend",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.finance",
+      "identity": null,
+      "target": "dir"
+    }
+  }
+}

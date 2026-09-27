@@ -4,21 +4,33 @@ A tiny terminal console for looking up stock, ETF, crypto, and FX prices —
 plus recent financial news — with a natural-language research mode backed
 by a swappable LLM provider (Anthropic, DeepSeek, OpenAI-compatible, ...).
 
+There are two frontends on the same backend: the terminal REPL (`stox.py`,
+below) and a native macOS app (`macapp/`, see [macOS app](#macos-app)) —
+the same relationship as Claude Code and the Claude desktop app.
+
 ## Layout
 
 ```
-stox.py                entry point (`python stox.py`)
+stox.py                terminal entry point (`python stox.py`)
+stox_bridge.py          JSON-lines entry point for the macOS app (`python stox_bridge.py`)
 stoxlib/
   quotes.py            EODHD quotes data source — Quote, fetch_quotes
   news.py              EODHD news data source — Article, fetch_news
   webz.py              webz.io world/geopolitical news — GeoArticle, fetch_geo_news
   webfetch.py          fetches a url and extracts its readable article text
+  fundamentals.py      company fundamentals (yfinance) — Fundamentals, fetch_fundamentals
+  history.py           OHLC price history — Bar, fetch_history
   considerations.py    standing factors the agent always weighs, persisted to disk
-  rendering.py         Quote/Article -> rich console output
+  rendering.py         Quote/Article -> rich console output (terminal only)
   providers.py         LLM provider registry (STOX_LLM_PROVIDER -> chat model)
+  tool_loop.py          shared LLM tool-calling loop used by agent.py and analysis.py
+  tools.py              the individual tool implementations (quote/news/history/...)
   agent.py             natural-language question handling (LangChain tool use)
-  config.py            loads .env files so keys don't need `export`ing every time
-  shell.py             the REPL — routes input, owns the Console, line editing
+  analysis.py           the /analyze multi-agent trend/fundamentals/news/geopolitics pipeline
+  config.py             loads .env files so keys don't need `export`ing every time
+  shell.py              the terminal REPL — routes input, owns the Console, line editing
+  bridge.py              the JSON-lines protocol behind stox_bridge.py, for the macOS app
+macapp/                 the native macOS app (Electron + TypeScript/React) — see below
 tests/                 pytest suite, one file per stoxlib module (see Testing)
 requirements.txt       pinned runtime dependencies
 requirements-dev.txt   requirements.txt + pytest
@@ -182,6 +194,45 @@ EODHD uses `SYMBOL.EXCHANGE`. A bare symbol defaults to `.US`:
 The `demo` key works only for: `AAPL.US`, `TSLA.US`, `VTI.US`, `AMZN.US`,
 `BTC-USD.CC`, `EURUSD.FOREX`.
 
+## macOS app
+
+`macapp/` is a native macOS app (Electron + TypeScript/React) that's a
+second frontend on the same `stoxlib` backend the terminal REPL uses —
+chat-style window instead of a REPL, quote/news/analysis rendered as
+native-feeling cards instead of rich console panels, plus a Settings
+panel and a Considerations panel. Nothing in `stoxlib/` changes to support
+it: it drives the backend through `stox_bridge.py`, a JSON-lines process
+(one command in per line, one event out per line — see `stoxlib/bridge.py`'s
+module docstring for the protocol) that the app's Electron main process
+spawns as a subprocess and talks to over stdin/stdout, the same functions
+(`agent.ask_agent`, `analysis.run_stock_analysis`, `quotes.fetch_quotes`,
+...) the CLI calls, just returning data instead of printing it.
+
+### Running it (development)
+
+Requires the same Python setup as the CLI (an activated `.venv` with
+`requirements.txt` installed — the app's dev mode spawns `.venv/bin/python3`
+directly) plus Node.js:
+
+```bash
+cd macapp
+npm install     # one time
+npm run dev
+```
+
+A window opens; type a ticker or a plain-English question the same way
+you would at the CLI's `›` prompt, or use `/price <ticker...>`,
+`/analyze <ticker>`, `/reset` (or `/new`) the same way you'd use those at
+the CLI. Settings (LLM provider/model, API keys) are saved to
+`~/.config/stox/.env` — the same file `config.load_env()` already reads,
+so a key set from the app is immediately visible to the CLI too, and
+vice versa.
+
+`npm run typecheck` and `npm run build` (a one-off production build, output
+to `macapp/out/`) are also available; `npm run package:mac` builds a
+double-clickable `.app` but needs the PyInstaller-bundled backend under
+`macapp/backend/stox-backend` first (not yet wired up — see Roadmap).
+
 ## Testing
 
 ```bash
@@ -205,6 +256,10 @@ before every test so a developer's own shell exports can't leak in):
 | `test_agent.py`       | the tool-calling loop (all four tools), the read_article url allow-list, conversation-history threading/trimming, and considerations being injected into the system prompt, using a fake chat model — no LLM calls |
 | `test_config.py`      | `.env` load order and precedence vs. real env vars         |
 | `test_shell.py`       | input routing, command handling, the REPL loop (canned input) |
+| `test_bridge.py`      | the JSON-lines protocol behind the macOS app: one command in -> the right event(s) out for each command, thread-safe concurrent `/analyze` events, history persistence and `reset` |
+
+The macOS app itself (`macapp/`) has its own toolchain (`npm run typecheck`,
+`npm run build`) — see [macOS app](#macos-app) above.
 
 ## Notes
 
@@ -223,5 +278,7 @@ before every test so a developer's own shell exports can't leak in):
 - [x] Conversation memory across turns in a session (`/reset` to clear it)
 - [x] Standing considerations that persist across sessions (`remember_consideration`, `/considerations`)
 - [x] Geopolitical/macro news (webz.io, via the `get_geopolitical_news` agent tool and `/analyze`'s geopolitics specialist)
-- [ ] Add fundamentals fetch (financials, ratios — also where company names live)
+- [x] Add fundamentals fetch (financials, ratios — also where company names live)
 - [ ] CI (run `pytest` on push)
+- [x] Native macOS app (Electron + TypeScript/React) driving the same backend via `stox_bridge.py`
+- [ ] Package the macOS app into a standalone double-clickable `.app` (PyInstaller-bundled backend, no separate Python/Node setup for the end user)
