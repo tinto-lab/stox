@@ -13,10 +13,20 @@
 # auto-detected. Verified by actually running the frozen binary against
 # each of the three providers -- see the Phase 3 notes in the PR/commit
 # this file was added in.
+#
+# webfetch.py's read_article tool depends on trafilatura, which in turn
+# depends on justext and tld -- all three ship non-Python data files
+# (trafilatura/settings.cfg, justext/stoplists/*.txt, tld's public suffix
+# list) that PyInstaller's import analysis has no way to know about since
+# they're loaded by path at runtime (Path(__file__).parent / "...") rather
+# than imported. Omitting them doesn't fail at build time -- configparser
+# and friends fail silently on a missing file -- it fails at first actual
+# use instead ("No option 'min_extracted_size' in section: 'DEFAULT'" for
+# trafilatura specifically), so these are collected explicitly too.
 
 import os
 
-from PyInstaller.utils.hooks import collect_all, copy_metadata
+from PyInstaller.utils.hooks import collect_all, collect_data_files, copy_metadata
 
 REPO_ROOT = os.path.join(SPECPATH, "..")
 
@@ -34,6 +44,8 @@ for pkg in ("langchain_anthropic", "langchain_deepseek", "langchain_openai", "la
     datas += pkg_datas
     binaries += pkg_binaries
     hiddenimports += pkg_hiddenimports
+for pkg in ("trafilatura", "justext", "tld"):
+    datas += collect_data_files(pkg)
 
 a = Analysis(
     [os.path.join(REPO_ROOT, "stox_bridge.py")],
