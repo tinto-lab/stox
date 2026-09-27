@@ -1,4 +1,6 @@
 :root {
+  /* Lets native scrollbars and form controls restyle when the theme switches. */
+  color-scheme: light dark;
   --bg: #ffffff;
   --bg-subtle: #f6f7f8;
   --fg: #1a1a1a;
@@ -988,6 +990,11 @@ tr.missing {
   border: 1px solid var(--border);
   background: var(--card-bg);
   color: var(--fg);
+}
+
+.theme-picker {
+  align-self: flex-start;
+  background: var(--card-bg);
 }
 
 .settings-row {

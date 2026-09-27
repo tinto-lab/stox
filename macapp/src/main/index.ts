@@ -1,11 +1,12 @@
 import path from 'node:path'
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import type { BridgeCommand } from '../shared/bridgeProtocol'
-import type { IpcResult, WatchlistEntry } from '../shared/types'
+import type { IpcResult, Theme, WatchlistEntry } from '../shared/types'
 import { resolveBackendCommand } from './backendCommand'
 import { BridgeProcess } from './bridgeProcess'
 import { readEnvFile, writeEnvFile } from './envFile'
 import { fetchFundamentals, fetchHistory, fetchQuotes, hasEodhdKey, searchSymbols } from './marketData'
+import { applyTheme, getTheme, setTheme } from './preferences'
 import { readWatchlist, writeWatchlist } from './watchlist'
 
 let mainWindow: BrowserWindow | null = null
@@ -111,7 +112,15 @@ handle('settings:save', (values: Record<string, string>) => {
   if (bridge.running) bridge.restart()
 })
 
-app.whenReady().then(createWindow)
+handle('appearance:get', getTheme)
+handle('appearance:set', (theme: Theme) => setTheme(theme))
+
+app.whenReady().then(() => {
+  // Applied before the window exists so it opens in the chosen theme, with no
+  // flash of the system one.
+  applyTheme(getTheme())
+  createWindow()
+})
 
 app.on('window-all-closed', () => {
   bridge.stop()

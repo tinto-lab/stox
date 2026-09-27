@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
+import { THEMES, type Theme } from '../../../shared/types'
 
 const PROVIDERS = ['anthropic', 'deepseek', 'openai'] as const
+
+const THEME_LABELS: Record<Theme, string> = { system: 'System', light: 'Light', dark: 'Dark' }
 
 const CHAT_FIELDS = [
   { key: 'ANTHROPIC_API_KEY', label: 'Anthropic API key' },
@@ -12,13 +15,21 @@ const CHAT_FIELDS = [
 export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [values, setValues] = useState<Record<string, string>>({})
   const [loaded, setLoaded] = useState(false)
+  const [theme, setTheme] = useState<Theme | null>(null)
 
   useEffect(() => {
+    window.stox.getTheme().then(setTheme)
     window.stox.readSettings().then((current) => {
       setValues(current)
       setLoaded(true)
     })
   }, [])
+
+  // Takes effect immediately (and is saved on its own), independent of the form's Save.
+  const chooseTheme = (next: Theme) => {
+    setTheme(next)
+    void window.stox.setTheme(next)
+  }
 
   const setField = (key: string, value: string) => setValues((prev) => ({ ...prev, [key]: value }))
 
@@ -29,6 +40,25 @@ export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSav
           <h2>Settings</h2>
           <button onClick={onClose}>Close</button>
         </div>
+        {theme && (
+          <div className="settings-row">
+            <span>Appearance</span>
+            <div className="segmented theme-picker" role="radiogroup" aria-label="Appearance">
+              {THEMES.map((t) => (
+                <button
+                  key={t}
+                  role="radio"
+                  aria-checked={t === theme}
+                  className={t === theme ? 'active' : ''}
+                  onClick={() => chooseTheme(t)}
+                >
+                  {THEME_LABELS[t]}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        <h3 className="settings-section">API keys</h3>
         <p className="panel-sheet-hint">
           Saved to ~/.config/stox/.env — the same file the terminal CLI reads, so a key set here is
           also picked up by `python stox.py`.

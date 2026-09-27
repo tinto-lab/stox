@@ -106,6 +106,10 @@ export interface MarketStatus {
  * plain message instead of Electron's "Error invoking remote method ..." wrapper. */
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
 
+export const THEMES = ['system', 'light', 'dark'] as const
+/** The app's appearance: follow macOS, or force light/dark. */
+export type Theme = (typeof THEMES)[number]
+
 /** The `window.stox` API the preload script exposes to the renderer. */
 export interface StoxApi {
   // Market data -- fetched directly from EODHD/Yahoo by the main process.
@@ -122,4 +126,6 @@ export interface StoxApi {
   onEvent(listener: (event: BridgeEvent) => void): () => void
   readSettings(): Promise<Record<string, string>>
   saveSettings(values: Record<string, string>): Promise<void>
+  getTheme(): Promise<Theme>
+  setTheme(theme: Theme): Promise<void>
 }

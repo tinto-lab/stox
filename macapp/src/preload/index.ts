@@ -8,6 +8,7 @@ import type {
   QuoteResult,
   StoxApi,
   SymbolMatch,
+  Theme,
   WatchlistEntry
 } from '../shared/types'
 import type { BridgeCommand, BridgeEvent } from '../shared/bridgeProtocol'
@@ -39,7 +40,9 @@ const stoxApi: StoxApi = {
     return () => ipcRenderer.removeListener('bridge:event', handler)
   },
   readSettings: () => invoke<Record<string, string>>('settings:read'),
-  saveSettings: (values: Record<string, string>) => invoke<void>('settings:save', values)
+  saveSettings: (values: Record<string, string>) => invoke<void>('settings:save', values),
+  getTheme: () => invoke<Theme>('appearance:get'),
+  setTheme: (theme: Theme) => invoke<void>('appearance:set', theme)
 }
 
 contextBridge.exposeInMainWorld('stox', stoxApi)
