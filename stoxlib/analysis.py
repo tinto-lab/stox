@@ -200,9 +200,12 @@ AGGREGATOR_SYSTEM = (
     "risk level (low/medium/high), and a directional lean "
     "(favorable/neutral/cautious). Fold in the geopolitical analysis "
     "where it's actually relevant -- don't force a connection if that "
-    "specialist found nothing notable. This is a framework for the user's "
-    "own decision, not a directive to buy or sell, and not personalized "
-    "financial advice. Weigh any standing considerations listed below. "
+    "specialist found nothing notable. Then give a clear verdict line "
+    "(Buy, Hold, or Sell) with a one-line reason, and a price outlook: a "
+    "target price or range over roughly the next 3-6 months with your "
+    "confidence (low/medium/high). Commit to a call -- don't hedge it "
+    "away or refuse; the user sees a separate disclaimer. Weigh any "
+    "standing considerations listed below. "
     "Keep it tight: plain text, short bullet lines, no markdown headers "
     "-- the four source analyses are shown to the user separately, so "
     "don't just repeat them."
@@ -364,10 +367,11 @@ def analyze_stock(ticker: str) -> str:
     """Run a full multi-agent analysis of one ticker: dedicated trend,
     fundamentals, news, and geopolitics agents each produce a focused
     analysis, then an aggregator combines them into a risk assessment
-    (bullish/bearish factors, an overall risk level, and a directional
-    lean).
+    (bullish/bearish factors, an overall risk level, a directional lean,
+    a Buy/Hold/Sell verdict, and a price outlook).
 
-    Use this for buy/sell/risk questions or requests for a full analysis --
+    Use this for buy/sell/hold, price-prediction, or risk questions, or
+    requests for a full analysis --
     it's slower than the individual data tools (it makes several LLM
     calls), so don't call it just for a simple price or news lookup.
     """
