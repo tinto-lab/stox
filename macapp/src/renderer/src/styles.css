@@ -313,9 +313,15 @@ button:disabled {
 
 /* -- dashboard -- */
 
+/* auto-fit collapses the unused tracks, and capped card widths plus
+ * justify-content center the cards as a group -- so a few pinned stocks sit
+ * in the middle of a wide window instead of hugging the left edge. */
 .dashboard {
+  max-width: 1400px;
+  margin: 0 auto;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(260px, 320px));
+  justify-content: center;
   gap: 12px;
 }
 
@@ -419,7 +425,8 @@ button:disabled {
 /* -- stock detail -- */
 
 .detail {
-  max-width: 980px;
+  max-width: 1040px;
+  margin: 0 auto;
 }
 
 .back {
@@ -676,14 +683,57 @@ button:disabled {
 /* -- chat side panel -- */
 
 .chat-slot {
+  position: relative;
   display: flex;
   flex-shrink: 0;
+  min-width: 320px;
+  max-width: calc(100vw - 420px);
+}
+
+.resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 7px;
+  z-index: 5;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 3px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.resize-handle:hover::after,
+.resize-handle:focus-visible::after,
+.resize-handle.dragging::after {
+  opacity: 1;
+}
+
+.resize-handle:focus-visible {
+  outline: none;
+}
+
+/* While dragging: keep the resize cursor everywhere and stop text selection. */
+body.resizing {
+  cursor: col-resize;
+  user-select: none;
 }
 
 .chat-panel {
   display: flex;
   flex-direction: column;
-  width: 400px;
+  flex: 1;
+  min-width: 0;
   border-left: 1px solid var(--border);
   background: var(--bg-subtle);
 }

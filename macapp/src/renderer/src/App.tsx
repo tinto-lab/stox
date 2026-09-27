@@ -3,6 +3,7 @@ import type { Quote, WatchlistEntry } from '../../shared/types'
 import { ChatPanel } from './components/ChatPanel'
 import { ConsiderationsPanel } from './components/ConsiderationsPanel'
 import { Dashboard } from './components/Dashboard'
+import { ResizeHandle } from './components/ResizeHandle'
 import { SearchBox } from './components/SearchBox'
 import { SettingsPanel } from './components/SettingsPanel'
 import { StockDetail } from './components/StockDetail'
@@ -10,6 +11,35 @@ import { fmtTime } from './format'
 import { useBridge } from './useBridge'
 
 const REFRESH_MS = 60_000
+
+const CHAT_WIDTH_KEY = 'stox.chatWidth'
+const CHAT_DEFAULT_WIDTH = 440
+const CHAT_MIN_WIDTH = 320
+// Room the dashboard/stock view always keeps; also enforced in CSS
+// (.chat-slot's max-width) for when the window shrinks after a resize.
+const MAIN_MIN_WIDTH = 420
+
+function clampChatWidth(width: number): number {
+  return Math.round(Math.max(CHAT_MIN_WIDTH, Math.min(width, window.innerWidth - MAIN_MIN_WIDTH)))
+}
+
+// localStorage: a per-machine view preference, fine to lose (see the catch blocks).
+function loadChatWidth(): number {
+  try {
+    const saved = Number(localStorage.getItem(CHAT_WIDTH_KEY))
+    return saved >= CHAT_MIN_WIDTH ? saved : CHAT_DEFAULT_WIDTH
+  } catch {
+    return CHAT_DEFAULT_WIDTH
+  }
+}
+
+function saveChatWidth(width: number): void {
+  try {
+    localStorage.setItem(CHAT_WIDTH_KEY, String(width))
+  } catch {
+    // storage unavailable -- the width just won't be remembered
+  }
+}
 
 export default function App() {
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([])
@@ -28,6 +58,7 @@ export default function App() {
   // doesn't lose the conversation; until then the Python backend never starts.
   const [chatOpen, setChatOpen] = useState(false)
   const [chatStarted, setChatStarted] = useState(false)
+  const [chatWidth, setChatWidth] = useState(loadChatWidth)
   const bridge = useBridge(chatStarted)
 
   const [showSettings, setShowSettings] = useState(false)
@@ -120,6 +151,12 @@ export default function App() {
     }
   }
 
+  const resizeChat = (width: number, done: boolean): void => {
+    const clamped = clampChatWidth(width)
+    setChatWidth(clamped)
+    if (done) saveChatWidth(clamped)
+  }
+
   const analyzeInChat = (code: string): void => {
     openChat()
     bridge.analyze(code)
@@ -191,7 +228,13 @@ export default function App() {
         </main>
 
         {chatStarted && (
-          <div className="chat-slot" hidden={!chatOpen}>
+          <div className="chat-slot" hidden={!chatOpen} style={{ width: chatWidth }}>
+            <ResizeHandle
+              width={chatWidth}
+              label="Resize chat panel"
+              onResize={resizeChat}
+              onReset={() => resizeChat(CHAT_DEFAULT_WIDTH, true)}
+            />
             <ChatPanel
               bridge={bridge}
               onClose={() => setChatOpen(false)}
