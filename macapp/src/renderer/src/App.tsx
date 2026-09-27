@@ -222,6 +222,7 @@ export default function App() {
               missing={missing}
               onOpen={setSelected}
               onUnpin={(code) => saveWatchlist(watchlist.filter((e) => e.code !== code))}
+              onRearrange={saveWatchlist}
               onFocusSearch={() => searchRef.current?.focus()}
             />
           )}

@@ -339,6 +339,10 @@ button:disabled {
   transition: border-color 0.12s;
 }
 
+.ticker-card.dragging {
+  opacity: 0.4;
+}
+
 .ticker-card:hover,
 .ticker-card:focus-visible {
   border-color: var(--faint);
