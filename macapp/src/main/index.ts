@@ -8,6 +8,17 @@ import type { BridgeCommand } from './protocol'
 let mainWindow: BrowserWindow | null = null
 const bridge = new BridgeProcess(resolveBackendCommand)
 
+// Registered once for the process's lifetime, not per-window: it reads
+// `mainWindow` live (the closure captures the module-level `let`, not a
+// snapshot), so it doesn't need re-registering when a window is closed
+// and reopened (e.g. via the Dock icon on macOS) -- doing that here
+// instead of inside createWindow() would silently stack one extra
+// listener per reopen, multiplying every backend event by however many
+// times the window had been reopened.
+bridge.onEvent((event) => {
+  mainWindow?.webContents.send('bridge:event', event)
+})
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 980,
@@ -22,9 +33,6 @@ function createWindow(): void {
     }
   })
 
-  bridge.onEvent((event) => {
-    mainWindow?.webContents.send('bridge:event', event)
-  })
   bridge.start()
 
   if (process.env.ELECTRON_RENDERER_URL) {
