@@ -114,16 +114,9 @@ def _run_fundamentals_agent(llm, ticker, on_tool_call=None):
 
 
 NEWS_AGENT_SYSTEM = (
-    "You are stox's news analyst. Given a ticker, call get_stock_news to "
-    "see recent headlines -- each result already includes the article's "
-    "full text, not just a short summary. If a particular article's text "
-    "couldn't be fetched (it falls back to a short summary in that case) "
-    "and it looks important enough to be worth another try, call "
-    "read_article with its exact url from get_stock_news's results -- only "
-    "urls that came from get_stock_news, not urls from anywhere else. In "
-    "2-4 sentences, summarize the "
-    "sentiment and any notable catalysts or risks in the news. Don't give "
-    "a buy/sell verdict -- that's someone else's job."
+    "You are stox's news analyst. Given a ticker, call get_stock_news and "
+    "summarize in 2-4 sentences the sentiment and any notable catalysts or "
+    "risks. Don't give a buy/sell verdict -- that's someone else's job."
 )
 
 
@@ -150,30 +143,21 @@ def _run_news_agent(llm, ticker, on_tool_call=None):
     return text, state["articles"]
 
 
+MAX_GEO_SEARCHES = 3
+
 GEOPOLITICS_AGENT_SYSTEM = (
-    "You are stox's geopolitics analyst. Given a ticker, think about which "
-    "countries, regions, and macro forces the company is actually exposed "
-    "to -- headquarters and key markets, manufacturing and supply chain, "
-    "commodity inputs, regulatory jurisdictions, major competitors' home "
-    "countries -- and call get_geopolitical_news with free-text queries "
-    "about those angles, not the ticker symbol (get_geopolitical_news "
-    "isn't ticker-scoped). Search creatively and from more than one angle "
-    "if the first query comes back thin: tariffs, export controls, "
-    "sanctions, elections, central-bank policy, regional conflict, "
-    "currency moves, commodity prices, and similar. Each result already "
-    "includes the article's full text, not just a short summary. If a "
-    "particular article's text couldn't be fetched (it falls back to a "
-    "short summary in that case) and it looks important enough to be worth "
-    "another try, call read_article with its exact url from "
-    "get_geopolitical_news's results -- only urls that came from "
-    "get_geopolitical_news, not urls from anywhere else. In 2-4 sentences, "
-    "explain what geopolitical or macro forces could move this stock and "
-    "how -- say plainly if nothing relevant turns up rather than forcing a "
-    "connection. Don't give a buy/sell verdict -- that's someone else's job."
+    "You are stox's geopolitics analyst. Given a ticker, work out which "
+    "countries, supply chains, commodities, and regulators the company is "
+    "exposed to, then search get_geopolitical_news for those angles. You "
+    "have a budget of %d searches: pick the angles that matter most, keep "
+    "each query to a few key words (long queries tend to match nothing), "
+    "and make all the searches together in your first response. In 2-4 "
+    "sentences, explain what geopolitical or macro forces could move this "
+    "stock and how -- say plainly if nothing relevant turns up. Don't "
+    "mention your search budget. Don't give a buy/sell verdict -- that's "
+    "someone else's job." % MAX_GEO_SEARCHES
 )
 
-
-MAX_GEO_SEARCHES = 3
 
 _GEO_SEARCH_BUDGET_NOTICE = (
     "error: you've used up your %d searches for this run -- work with what "
@@ -340,13 +324,15 @@ def run_stock_analysis(ticker, llm=None, on_agent_start=None, on_tool_call=None)
     )
 
 
-def run_analyze_stock_tool(ticker, llm=None):
-    """Run the full multi-agent analysis and render it as tool-result text
-    for the main agent; also return the AnalysisResult (or None on error)."""
-    result = run_stock_analysis(ticker, llm=llm)
-    if result.error:
-        return "error: %s" % result.error, None
+def format_analysis_for_agent(result):
+    """Render a successful AnalysisResult as tool-result text for the main
+    agent -- used both when the agent calls analyze_stock itself and when
+    /analyze's result is recorded into conversation history.
 
+    Source article urls go on "url: ..." lines, the same format
+    run_news_tool uses, so agent._article_urls_in recovers them and a
+    follow-up "read that article" can pass read_article's allow-list.
+    """
     text = (
         "trend: %s\n\nfundamentals: %s\n\nnews: %s\n\ngeopolitics: %s\n\n"
         "risk_assessment: %s" % (
@@ -354,7 +340,23 @@ def run_analyze_stock_tool(ticker, llm=None):
             result.geopolitics_text, result.verdict_text,
         )
     )
-    return text, result
+    sources = [a for a in result.articles + result.geo_articles if a.link]
+    if sources:
+        text += "\n\nsources:\n" + "\n".join(
+            "title: %s\nurl: %s" % (a.title, a.link) for a in sources)
+    return text
+
+
+def run_analyze_stock_tool(ticker, llm=None, on_agent_start=None, on_tool_call=None):
+    """Run the full multi-agent analysis and render it as tool-result text
+    for the main agent; also return the AnalysisResult (or None on error).
+    `on_agent_start` and `on_tool_call` are passed straight to
+    run_stock_analysis -- see its docstring for their signatures."""
+    result = run_stock_analysis(ticker, llm=llm, on_agent_start=on_agent_start,
+                                on_tool_call=on_tool_call)
+    if result.error:
+        return "error: %s" % result.error, None
+    return format_analysis_for_agent(result), result
 
 
 @tool

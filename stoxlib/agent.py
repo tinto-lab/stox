@@ -10,7 +10,7 @@ no reason to change when the console formatting does.
 import re
 from dataclasses import dataclass, field
 
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 
 from . import analysis
@@ -26,52 +26,13 @@ from .tools import (UNKNOWN_ARTICLE_URL_ERROR, get_company_fundamentals,
 
 AGENT_SYSTEM = (
     "You are stox, a terse terminal research assistant for stocks, crypto, "
-    "and FX. The user may ask in any language -- reply in that same "
-    "language, regardless of what language this prompt or the tools' "
-    "output happen to be in. Translate company names to tickers yourself "
-    "(Apple -> AAPL, Tesla -> TSLA, Microsoft -> MSFT, ...) -- this "
-    "includes names given in another language or script (e.g. Nvidia's "
-    "Chinese name). Every message, including a bare ticker or company name "
-    "with no other wording, reaches you directly -- decide for yourself "
-    "how much the user actually wants. A bare ticker/name, or a plain "
-    "\"what's X trading at\", means they just want the price: call only "
-    "get_stock_quote and answer with just that. Only reach for more tools "
-    "when the wording asks for more. Call get_stock_quote for price "
-    "questions, and get_stock_news for questions about news, headlines, or "
-    "what's going on with a company -- call both if the user asks for both. "
-    "Call get_price_history for questions about past performance or how a "
-    "price has moved over time (e.g. \"how has apple done this month\", "
-    "\"tesla's 6-month performance\", \"price a year ago\") -- pick `days` "
-    "to cover the period asked about (a month is ~30, 6 months is ~180, a "
-    "year is ~365). Call get_company_fundamentals for questions about "
-    "profitability, valuation, or financial health (EBITDA, margins, "
-    "revenue growth, P/E, and similar). Call get_geopolitical_news for "
-    "questions about tariffs, sanctions, elections, central-bank policy, "
-    "regional conflict, or other macro/geopolitical forces -- it searches "
-    "general world news by free-text query (not a ticker), so think about "
-    "what the question is really about (e.g. \"Taiwan semiconductor export "
-    "controls\" for a chip-supply question) and pass that as the query. "
-    "get_stock_news and get_geopolitical_news already include each "
-    "article's full text, not just a short summary, so you don't normally "
-    "need to fetch further. If a particular article's text couldn't be "
-    "fetched (it falls back to a short summary in that case) and that "
-    "summary isn't enough to answer the question, call read_article with "
-    "the exact url of that article from either tool's results -- you can "
-    "only read urls that came from get_stock_news or get_geopolitical_news, "
-    "not urls from anywhere else. If the user asks whether to buy or sell "
-    "something, wants a risk assessment, or asks for a full analysis of a "
-    "company, call analyze_stock instead of the individual data tools -- "
-    "it runs dedicated trend, fundamentals, and news agents and returns "
-    "their findings plus an aggregated risk assessment. If the user asks "
-    "you to "
-    "always factor something in, keep something in mind, or remember a "
-    "standing consideration for future 'why is it moving' or risk "
-    "questions, call remember_consideration to save it permanently across "
-    "sessions -- only for standing instructions about how you analyze, "
-    "never for one-off facts like today's price. Answer in one or two "
-    "short sentences using what the tools return. Don't repeat raw tool "
-    "output verbatim and don't restate a full table or headline list -- a "
-    "detailed panel is printed to the console right after your answer."
+    "and FX. Reply in the user's language. Map company names in any "
+    "language or script to tickers yourself (Apple -> AAPL). Fetch only "
+    "what the question asks for: a bare ticker or company name just wants "
+    "the price. For buy/sell, risk, or full-analysis questions, call "
+    "analyze_stock instead of the individual data tools. Answer in one or "
+    "two short sentences -- a detailed panel of the tool data is printed "
+    "right after your answer, so don't restate it."
 )
 
 
@@ -120,6 +81,29 @@ def _trim_history(history):
         del history[:cutoff]
 
 
+def record_analysis(history, ticker, result):
+    """Append a /analyze run to `history` as if the agent had called
+    analyze_stock itself, so follow-ups ("why is the risk high?", "read
+    that tariff article") can build on it.
+
+    Shaped as a real tool-call turn -- user message, AIMessage carrying the
+    analyze_stock call, its ToolMessage, a short final answer -- rather than
+    a bare question/answer pair, so it matches what the model sees on the
+    ask_agent path and _article_urls_in finds the source urls in the
+    ToolMessage. Trimmed like any other turn.
+    """
+    call_id = "analyze_%d" % len(history)
+    history.extend([
+        HumanMessage(content="/analyze %s" % ticker),
+        AIMessage(content="", tool_calls=[
+            {"name": "analyze_stock", "args": {"ticker": ticker}, "id": call_id},
+        ]),
+        ToolMessage(content=analysis.format_analysis_for_agent(result), tool_call_id=call_id),
+        AIMessage(content="Full analysis of %s is shown above." % ticker),
+    ])
+    _trim_history(history)
+
+
 _URL_LINE_RE = re.compile(r"^url: (\S+)$", re.MULTILINE)
 
 
@@ -158,7 +142,8 @@ def remember_consideration(text: str) -> str:
     return run_remember_consideration_tool(text)
 
 
-def ask_agent(query, history=None, llm=None, on_tool_call=None):
+def ask_agent(query, history=None, llm=None, on_tool_call=None,
+              on_analysis_agent_start=None, on_analysis_tool_call=None):
     """Resolve a natural-language query into an AgentResult.
 
     `llm` is injectable (tests can pass a fake chat model); by default it's
@@ -178,6 +163,13 @@ def ask_agent(query, history=None, llm=None, on_tool_call=None):
     `on_tool_call`, if given, is called as `on_tool_call(name, args)` right
     before each tool actually runs -- e.g. so the caller can print "calling
     get_stock_news(...)" for visibility into what the model is doing.
+
+    `on_analysis_agent_start` and `on_analysis_tool_call` are the same
+    progress callbacks for when the model calls analyze_stock -- passed
+    through to run_stock_analysis as its `on_agent_start`/`on_tool_call`,
+    so the specialists' work is as visible here as it is under /analyze.
+    Note the analysis tool-call callback takes a leading agent_name and may
+    be called concurrently from the specialists' threads.
     """
     if llm is None:
         try:
@@ -219,7 +211,9 @@ def ask_agent(query, history=None, llm=None, on_tool_call=None):
             state["fundamentals"] = fundamentals or state["fundamentals"]
             return result_text
         if name == "analyze_stock":
-            result_text, analysis_result = analysis.run_analyze_stock_tool(args.get("ticker", ""), llm=llm)
+            result_text, analysis_result = analysis.run_analyze_stock_tool(
+                args.get("ticker", ""), llm=llm, on_agent_start=on_analysis_agent_start,
+                on_tool_call=on_analysis_tool_call)
             if analysis_result is not None:
                 state["analysis"] = analysis_result
                 state["quotes"] = analysis_result.quotes or state["quotes"]

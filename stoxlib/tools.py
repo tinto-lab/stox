@@ -62,7 +62,7 @@ def run_quote_tool(tickers):
 
 @tool
 def get_stock_quote(tickers: list[str]) -> str:
-    """Look up real-time price quotes for one or more tickers via EODHD.
+    """Look up real-time price quotes for one or more tickers.
 
     Bare symbols default to the US exchange (AAPL, TSLA). Use
     SYMBOL.EXCHANGE for anything else (BMW.XETRA, BTC-USD.CC, EURUSD.FOREX).
@@ -107,7 +107,7 @@ def run_history_tool(ticker, days=30):
 
 @tool
 def get_price_history(ticker: str, days: int = 30) -> str:
-    """Look up historical daily OHLC prices for one ticker via EODHD.
+    """Look up historical daily OHLC prices for one ticker.
 
     `days` is how far back to look from today (default 30). Use this for
     questions about past performance or price trends over time, not for
@@ -150,7 +150,7 @@ def run_fundamentals_tool(ticker):
 
 @tool
 def get_company_fundamentals(ticker: str) -> str:
-    """Look up profitability and valuation fundamentals for one ticker via EODHD.
+    """Look up profitability and valuation fundamentals for one ticker.
 
     Covers EBITDA, revenue, margins, ROE/ROA, growth rates, P/E, and
     analyst target price. Use this for questions about a company's
@@ -188,7 +188,7 @@ def run_news_tool(tickers, limit=5):
 
 @tool
 def get_stock_news(tickers: list[str], limit: int = 5) -> str:
-    """Look up recent financial news headlines for one or more tickers via EODHD.
+    """Look up recent news for one or more tickers, with each article's full text.
 
     Use this for questions about news, headlines, or what's going on with a
     company or stock -- separate from its price. Bare symbols default to the
@@ -224,17 +224,16 @@ def run_geo_news_tool(query, limit=5):
 
 @tool
 def get_geopolitical_news(query: str, limit: int = 5) -> str:
-    """Search world/general news (via webz.io) for geopolitical or macro
+    """Search world/general news for geopolitical or macro
     developments -- tariffs, sanctions, export controls, elections,
     central-bank decisions, regional conflicts, commodity shocks -- that
     aren't scoped to one ticker the way get_stock_news is.
 
-    `query` is free text describing the situation, not a ticker symbol
-    (e.g. "Taiwan semiconductor export controls", "Red Sea shipping
-    disruption", "Fed interest rate decision"). Use this to find outside
-    forces that could move a stock beyond its own company-specific news --
-    think about what countries, supply chains, or commodities a company is
-    exposed to, and search creatively for developments there.
+    `query` is a few key words, not a ticker symbol -- every word must
+    match, so keep it short (e.g. "Taiwan chip export controls", "Fed rate
+    decision"). Use OR for alternatives and quotes for exact phrases:
+    tariffs OR "export controls". Searches English-language news from the
+    past week, best matches first.
     """
     text, _ = run_geo_news_tool(query, limit=limit)
     return text
@@ -258,8 +257,9 @@ def run_read_article_tool(url):
 def read_article(url: str) -> str:
     """Read the full text of one news article, given its exact url.
 
-    Only call this with a url that get_stock_news or get_geopolitical_news
-    already returned in this conversation -- use it when that article's
-    short summary doesn't cover what the question needs.
+    News results already include each article's full text; call this only
+    when an article's text fell back to a short summary and that isn't
+    enough. Only urls that get_stock_news or get_geopolitical_news returned
+    in this conversation work.
     """
     return run_read_article_tool(url)

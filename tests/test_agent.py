@@ -488,6 +488,22 @@ def test_ask_agent_executes_analyze_stock_tool_then_answers():
     assert result.fundamentals == _fundamentals()
 
 
+def test_ask_agent_passes_analysis_callbacks_to_analyze_stock():
+    llm = _FakeLLM([
+        AIMessage(content="", tool_calls=[
+            {"name": "analyze_stock", "args": {"ticker": "AAPL"}, "id": "call1"},
+        ]),
+        AIMessage(content="done", tool_calls=[]),
+    ])
+    on_start, on_call = Mock(), Mock()
+    with patch("stoxlib.analysis.run_analyze_stock_tool", return_value=("...", None)) as mock_tool:
+        agent.ask_agent("should I buy apple?", llm=llm, on_analysis_agent_start=on_start,
+                        on_analysis_tool_call=on_call)
+
+    assert mock_tool.call_args.kwargs["on_agent_start"] is on_start
+    assert mock_tool.call_args.kwargs["on_tool_call"] is on_call
+
+
 def test_ask_agent_can_call_both_tools_in_one_turn():
     llm = _FakeLLM([
         AIMessage(content="", tool_calls=[
@@ -705,6 +721,25 @@ def test_ask_agent_can_read_an_article_whose_url_only_appears_in_history():
     mock_fetch.assert_called_once_with("https://example.com/a")
     assert result.error is None
     assert result.text == "Here's more detail."
+
+
+def test_record_analysis_appends_a_tool_call_turn_the_agent_can_build_on():
+    """A recorded /analyze run must be a well-formed tool-call turn (so the
+    provider accepts it) and must expose its source urls to read_article
+    on a later ask_agent turn."""
+    from stoxlib.analysis import AnalysisResult
+
+    history = []
+    agent.record_analysis(history, "AAPL.US", AnalysisResult(
+        ticker="AAPL.US", verdict_text="high risk", articles=[_article()]))
+
+    human, call, tool_msg, answer = history
+    assert isinstance(human, HumanMessage)
+    assert call.tool_calls[0]["name"] == "analyze_stock"
+    assert tool_msg.tool_call_id == call.tool_calls[0]["id"]
+    assert "high risk" in tool_msg.content
+    assert isinstance(answer, AIMessage) and not answer.tool_calls
+    assert agent._article_urls_in(history) == {"https://example.com/a"}
 
 
 def test_trim_history_keeps_history_under_the_limit_and_cuts_at_a_turn_boundary():

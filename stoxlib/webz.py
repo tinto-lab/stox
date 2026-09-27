@@ -34,6 +34,17 @@ _RATE_LIMIT_BACKOFF = 1.5
 # actually use.
 _MAX_SIZE = 100
 
+# Without these, webz returns the most recently *crawled* matches from the
+# last 3 days in any language (its defaults: sort=crawled, ts=3 days ago) --
+# i.e. whatever happened to be crawled last, not what best fits the query.
+# domain_rank is the site's Tranco popularity rank (lower = more popular);
+# capping it drops small blogs and content farms while keeping the major
+# outlets, which all rank well inside the top 10,000. See
+# docs.webz.io/docs/webz/news-api-filters.
+_LOOKBACK_DAYS = 7
+_MAX_DOMAIN_RANK = 10000
+_QUERY_FILTERS = "language:english domain_rank:<%d" % _MAX_DOMAIN_RANK
+
 # Short-lived cache keyed on the exact (query, limit) pair, so a specialist
 # trying a couple of overlapping search angles in one run -- or two runs
 # for the same ticker minutes apart -- doesn't pay for the same query
@@ -136,7 +147,16 @@ def fetch_geo_news(query, limit=5):
     if not key:
         raise WebzError("no API key set -- see /help")
 
-    params = {"token": key, "q": query, "size": max(1, min(limit, _MAX_SIZE))}
+    # Parenthesized so an OR in the model's query doesn't swallow the filter
+    # ("a OR b language:english" would only filter the b side).
+    lookback_start_ms = int((time.time() - _LOOKBACK_DAYS * 86400) * 1000)
+    params = {
+        "token": key,
+        "q": "(%s) %s" % (query, _QUERY_FILTERS),
+        "size": max(1, min(limit, _MAX_SIZE)),
+        "sort": "relevancy",
+        "ts": lookback_start_ms,
+    }
 
     r = None
     for attempt in range(_RATE_LIMIT_RETRIES + 1):
