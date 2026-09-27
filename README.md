@@ -239,30 +239,42 @@ to `macapp/out/`) are also available.
 ```bash
 .venv/bin/pip install -r requirements-build.txt   # one time, adds pyinstaller
 cd macapp
-npm run package:mac
+npm run relaunch     # kill any running instance, rebuild, sign, open the fresh build
 ```
 
-This first runs `scripts/build_backend.sh` (PyInstaller, via
-`packaging/stox-backend.spec`) to freeze `stox_bridge.py` and all of
-`stoxlib` into a standalone binary at `macapp/backend/stox-backend/` —
-no system Python or this repo's `.venv` needed to run it — then
-`electron-builder` packages everything into
-`macapp/dist/mac-arm64/Stox.app`. The three LangChain provider packages
-(`langchain_anthropic`/`_deepseek`/`_openai`) are pulled in explicitly in
-the spec file since `providers.build_llm()` imports them by a
-runtime-built string (`importlib.import_module`), which PyInstaller's
-static analysis can't see on its own — see the spec's header comment.
+`npm run relaunch` is the one-command dev loop: it runs `npm run stop`
+(kills any Stox process still running — see below), `scripts/build_backend.sh`
+(PyInstaller, via `packaging/stox-backend.spec`, freezing `stox_bridge.py`
+and all of `stoxlib` into a standalone binary at `macapp/backend/stox-backend/`
+— no system Python or this repo's `.venv` needed to run it), `electron-vite
+build`, `electron-builder` (producing `macapp/dist/mac-arm64/Stox.app`),
+an ad-hoc `codesign` (electron-builder's `identity: null` config skips
+signing entirely; ad-hoc signing avoids a repeated Gatekeeper prompt on
+every local launch — a paid Apple Developer ID + notarization would only
+be needed to distribute the app to other people, out of scope for a
+personal tool), then opens the result. Use `npm run package:mac` instead
+if you don't want it to also open the app.
 
-`electron-builder`'s `identity: null` config skips code signing entirely,
-so sign it yourself afterward for smooth local double-clicking without a
-repeated Gatekeeper prompt:
+The three LangChain provider packages (`langchain_anthropic`/`_deepseek`/
+`_openai`) are pulled in explicitly in the PyInstaller spec since
+`providers.build_llm()` imports them by a runtime-built string
+(`importlib.import_module`), which PyInstaller's static analysis can't
+see on its own — see the spec's header comment.
 
-```bash
-codesign --force --deep --sign - macapp/dist/mac-arm64/Stox.app
-```
+**Stale running instances:** macOS apps keep running in the background
+after their window is closed (only Cmd+Q, or killing the process,
+actually stops them), and rebuilding the `.app` on disk has no effect on
+a process that's already running — so testing against a stale instance
+that predates your rebuild is an easy trap. Two defenses:
 
-A paid Apple Developer ID (and notarization) would only be needed to
-distribute the app to other people — out of scope for a personal tool.
+- The app itself refuses to run as a second instance
+  (`app.requestSingleInstanceLock()` in `macapp/src/main/index.ts`) — a
+  second `open`/double-click just focuses the already-running window
+  instead of starting a confusing duplicate process.
+- `npm run stop` (`scripts/kill_app.sh`) force-kills any running Stox
+  process (main, helpers, and the bundled Python backend) so you can be
+  sure the next launch is fresh — `npm run package:mac` and
+  `npm run relaunch` both run this first automatically.
 
 ## Testing
 

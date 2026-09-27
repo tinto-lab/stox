@@ -8,7 +8,9 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "build:backend": "../scripts/build_backend.sh",
-    "package:mac": "npm run build:backend && electron-vite build && electron-builder --mac",
+    "stop": "../scripts/kill_app.sh",
+    "package:mac": "npm run stop && npm run build:backend && electron-vite build && electron-builder --mac && codesign --force --deep --sign - dist/mac-arm64/Stox.app",
+    "relaunch": "npm run package:mac && open dist/mac-arm64/Stox.app",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json"
   },
   "dependencies": {

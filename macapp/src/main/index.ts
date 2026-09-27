@@ -8,6 +8,27 @@ import type { BridgeCommand } from './protocol'
 let mainWindow: BrowserWindow | null = null
 const bridge = new BridgeProcess(resolveBackendCommand)
 
+// Refuse to run as a second instance: without this, double-clicking the
+// Dock icon (or `open`-ing the app) while it's already running starts a
+// wholly separate process with its own Python backend subprocess, rather
+// than focusing the existing window -- confusing on its own, and exactly
+// how a stale process from a previous build can keep running unnoticed
+// alongside a freshly rebuilt one. The second launch quits immediately;
+// the first (already-running) instance just focuses its window instead.
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    } else {
+      createWindow()
+    }
+  })
+}
+
 // Registered once for the process's lifetime, not per-window: it reads
 // `mainWindow` live (the closure captures the module-level `let`, not a
 // snapshot), so it doesn't need re-registering when a window is closed
@@ -66,6 +87,14 @@ app.whenReady().then(createWindow)
 app.on('window-all-closed', () => {
   bridge.stop()
   if (process.platform !== 'darwin') app.quit()
+})
+
+// Belt-and-suspenders alongside window-all-closed: guarantees the Python
+// subprocess is killed on every quit path (Cmd+Q, Dock > Quit, ...), not
+// just the "closed the last window" one -- BridgeProcess.stop() is a
+// no-op if it's already stopped, so this is safe to call unconditionally.
+app.on('before-quit', () => {
+  bridge.stop()
 })
 
 app.on('activate', () => {
