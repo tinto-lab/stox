@@ -4,9 +4,11 @@ A tiny terminal console for looking up stock, ETF, crypto, and FX prices —
 plus recent financial news — with a natural-language research mode backed
 by a swappable LLM provider (Anthropic, DeepSeek, OpenAI-compatible, ...).
 
-There are two frontends on the same backend: the terminal REPL (`stox.py`,
-below) and a native macOS app (`macapp/`, see [macOS app](#macos-app)) —
-the same relationship as Claude Code and the Claude desktop app.
+There are two frontends: the terminal REPL (`stox.py`, below) and a native
+macOS app (`macapp/`, see [macOS app](#macos-app)). The app is a stock
+price and fundamentals dashboard that calls the data APIs itself, with the
+REPL's research chat available as an optional side panel on the same
+Python backend.
 
 ## Layout
 
@@ -199,23 +201,42 @@ The `demo` key works only for: `AAPL.US`, `TSLA.US`, `VTI.US`, `AMZN.US`,
 
 ## macOS app
 
-`macapp/` is a native macOS app (Electron + TypeScript/React) that's a
-second frontend on the same `stoxlib` backend the terminal REPL uses —
-chat-style window instead of a REPL, quote/news/analysis rendered as
-native-feeling cards instead of rich console panels, plus a Settings
-panel and a Considerations panel. Nothing in `stoxlib/` changes to support
-it: it drives the backend through `stox_bridge.py`, a JSON-lines process
-(one command in per line, one event out per line — see `stoxlib/bridge.py`'s
-module docstring for the protocol) that the app's Electron main process
-spawns as a subprocess and talks to over stdin/stdout, the same functions
-(`agent.ask_agent`, `analysis.run_stock_analysis`, `quotes.fetch_quotes`,
-...) the CLI calls, just returning data instead of printing it.
+`macapp/` is a native macOS app (Electron + TypeScript/React) for checking
+stock prices and company fundamentals:
+
+- **Dashboard** — the tickers you've pinned, each with its live price, day
+  change, day range, volume and a one-month sparkline. Prices refresh every
+  minute. Pins are saved to `~/.config/stox/watchlist.json`.
+- **Search** (⌘K) — look up a ticker or company name; Enter on a bare
+  ticker (`AAPL`, `SHOP.TO`) opens it directly.
+- **Stock view** — price chart (1M–5Y) with a hover crosshair, today's
+  quote, and fundamentals: valuation, profitability, growth and cash flow,
+  balance sheet, dividends and risk, analyst targets, and a company profile.
+  Pin or unpin the stock from here.
+- **Research chat** (⌘J) — an optional side panel with the same agent the
+  terminal REPL has (plain-English questions, `/price`, `/analyze`, `/reset`,
+  standing considerations). The stock view's "Analyze in chat" button runs
+  `/analyze` there.
+
+The dashboard, search and stock view don't use the Python backend at all:
+the Electron main process (`macapp/src/main/marketData.ts`) calls the same
+providers `stoxlib` uses directly — EODHD for quotes, history and symbol
+search, and Yahoo Finance for fundamentals (no key needed). Yahoo requests
+go through Electron's `net` module (Chromium's network stack), since Yahoo
+rate-limits Node's own `fetch` on sight; that's the same reason yfinance
+impersonates Chrome.
+
+Only the chat panel uses `stoxlib`. It drives the backend through
+`stox_bridge.py`, a JSON-lines process (one command in per line, one event
+out per line — see `stoxlib/bridge.py`'s module docstring for the protocol)
+that the main process spawns as a subprocess the first time the panel is
+opened, not at launch.
 
 ### Running it (development)
 
-Requires the same Python setup as the CLI (an activated `.venv` with
-`requirements.txt` installed — the app's dev mode spawns `.venv/bin/python3`
-directly) plus Node.js:
+Requires Node.js. The chat panel also needs the same Python setup as the
+CLI (a `.venv` with `requirements.txt` installed), because the app's dev
+mode spawns `.venv/bin/python3` directly:
 
 ```bash
 cd macapp
@@ -223,13 +244,13 @@ npm install     # one time
 npm run dev
 ```
 
-A window opens; type a ticker or a plain-English question the same way
-you would at the CLI's `›` prompt, or use `/price <ticker...>`,
-`/analyze <ticker>`, `/reset` (or `/new`) the same way you'd use those at
-the CLI. Settings (LLM provider/model, API keys) are saved to
-`~/.config/stox/.env` — the same file `config.load_env()` already reads,
-so a key set from the app is immediately visible to the CLI too, and
-vice versa.
+The dashboard opens empty: search for a stock (⌘K), open it, and pin it.
+Open the research chat with the Chat button or ⌘J. Settings (the EODHD key,
+plus the chat's LLM provider/model and keys) are saved to
+`~/.config/stox/.env`, the same file `config.load_env()` already reads, so
+a key set from the app is immediately visible to the CLI too, and vice
+versa. The dashboard only needs `EODHD_API_KEY`; the Python setup is only
+needed for the chat panel.
 
 `npm run typecheck` and `npm run build` (a one-off production build, output
 to `macapp/out/`) are also available.

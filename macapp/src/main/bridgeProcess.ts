@@ -1,7 +1,7 @@
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
 import readline from 'node:readline'
 import type { BackendCommand } from './backendCommand'
-import type { BridgeCommand, BridgeEvent } from './protocol'
+import type { BridgeCommand, BridgeEvent } from '../shared/bridgeProtocol'
 
 export type BridgeEventListener = (event: BridgeEvent) => void
 
@@ -43,6 +43,10 @@ export class BridgeProcess {
       this.child = null
       this.emit({ id: null, type: 'error', message: `backend process exited (code ${code})` })
     })
+  }
+
+  get running(): boolean {
+    return this.child !== null
   }
 
   restart(): void {

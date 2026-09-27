@@ -39,7 +39,10 @@ function makeId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
 
-export function useBridge() {
+/** Chat state for the side panel, driven by the Python backend. `enabled`
+ * stays false until the panel is first opened, so a session that only
+ * uses the dashboard never starts the backend. */
+export function useBridge(enabled: boolean) {
   const [transcript, setTranscript] = useState<TranscriptItem[]>([])
   const [isBusy, setIsBusy] = useState(false)
   const [considerations, setConsiderations] = useState<string[]>([])
@@ -131,11 +134,16 @@ export function useBridge() {
       }
     })
 
+    return unsubscribe
+  }, [append])
+
+  // Asking for considerations/status is what first spawns the Python
+  // backend, so it waits until the chat panel is actually opened.
+  useEffect(() => {
+    if (!enabled) return
     refreshConsiderations()
     refreshStatus()
-
-    return unsubscribe
-  }, [append, refreshConsiderations, refreshStatus])
+  }, [enabled, refreshConsiderations, refreshStatus])
 
   const ask = useCallback(
     (text: string) => {

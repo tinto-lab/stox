@@ -1,118 +1,225 @@
-import { useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { Quote, WatchlistEntry } from '../../shared/types'
+import { ChatPanel } from './components/ChatPanel'
 import { ConsiderationsPanel } from './components/ConsiderationsPanel'
+import { Dashboard } from './components/Dashboard'
+import { SearchBox } from './components/SearchBox'
 import { SettingsPanel } from './components/SettingsPanel'
-import { TranscriptRow } from './components/TranscriptRow'
+import { StockDetail } from './components/StockDetail'
+import { fmtTime } from './format'
 import { useBridge } from './useBridge'
 
-/** Mirrors stoxlib/shell.py's handle_command/handle_query routing: a
- * slash-prefixed line is a command, everything else (including a bare
- * ticker) goes to the agent -- there's no local ticker-detection heuristic
- * on either side. */
-function routeInput(
-  raw: string,
-  actions: { ask: (t: string) => void; quote: (t: string[]) => void; analyze: (t: string) => void; reset: () => void }
-): void {
-  const text = raw.trim()
-  if (!text) return
-
-  if (text.startsWith('/')) {
-    const [word, ...rest] = text.split(/\s+/)
-    const command = word.toLowerCase()
-    const argText = rest.join(' ').trim()
-
-    if (command === '/price') {
-      if (argText) actions.quote(argText.split(/\s+/))
-      return
-    }
-    if (command === '/analyze') {
-      if (argText) actions.analyze(argText.split(/\s+/)[0])
-      return
-    }
-    if (command === '/reset' || command === '/new') {
-      actions.reset()
-      return
-    }
-    return
-  }
-
-  actions.ask(text)
-}
+const REFRESH_MS = 60_000
 
 export default function App() {
-  const { transcript, isBusy, considerations, status, ask, quote, analyze, reset, addConsideration, removeConsideration, refreshStatus } =
-    useBridge()
-  const [draft, setDraft] = useState('')
-  const [showConsiderations, setShowConsiderations] = useState(false)
-  const [showSettings, setShowSettings] = useState(false)
-  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([])
+  const [selected, setSelected] = useState<WatchlistEntry | null>(null)
+  const [quotes, setQuotes] = useState<Record<string, Quote>>({})
+  const [missing, setMissing] = useState<Set<string>>(new Set())
+  const [quoteError, setQuoteError] = useState<string | null>(null)
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null)
+  // A count, not a boolean: a manual refresh can overlap the timer's, and the
+  // spinner should stay up until both have finished.
+  const [refreshesInFlight, setRefreshesInFlight] = useState(0)
+  const [hasEodhdKey, setHasEodhdKey] = useState(true)
+  const [watchlistError, setWatchlistError] = useState<string | null>(null)
 
-  const submit = (): void => {
-    if (isBusy) return
-    routeInput(draft, { ask, quote, analyze, reset })
-    setDraft('')
-    requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }))
+  // The chat panel stays mounted (just hidden) once opened, so closing it
+  // doesn't lose the conversation; until then the Python backend never starts.
+  const [chatOpen, setChatOpen] = useState(false)
+  const [chatStarted, setChatStarted] = useState(false)
+  const bridge = useBridge(chatStarted)
+
+  const [showSettings, setShowSettings] = useState(false)
+  const [showConsiderations, setShowConsiderations] = useState(false)
+  const searchRef = useRef<HTMLInputElement | null>(null)
+
+  const openChat = useCallback(() => {
+    setChatStarted(true)
+    setChatOpen(true)
+  }, [])
+
+  const refreshStatus = useCallback(() => {
+    window.stox
+      .status()
+      .then((s) => setHasEodhdKey(s.hasEodhdKey))
+      .catch(() => undefined)
+  }, [])
+
+  useEffect(() => {
+    refreshStatus()
+    window.stox
+      .readWatchlist()
+      .then(setWatchlist)
+      .catch((e: Error) => setWatchlistError(`Couldn't load pinned stocks: ${e.message}`))
+  }, [refreshStatus])
+
+  // Quote every pinned ticker plus whatever's open, in one batched request, every minute.
+  const codes = useMemo(() => {
+    const set = new Set(watchlist.map((e) => e.code))
+    if (selected) set.add(selected.code)
+    return [...set]
+  }, [watchlist, selected])
+  const codesKey = codes.join(',')
+
+  const refreshQuotes = useCallback(() => {
+    if (!codes.length) return
+    setRefreshesInFlight((n) => n + 1)
+    window.stox
+      .quotes(codes)
+      .then(({ quotes: fresh, missing: absent }) => {
+        setQuotes((prev) => {
+          const next = { ...prev }
+          for (const q of fresh) next[q.code] = q
+          return next
+        })
+        setMissing(new Set(absent))
+        setQuoteError(null)
+        setUpdatedAt(Date.now() / 1000)
+      })
+      .catch((e: Error) => setQuoteError(e.message))
+      .finally(() => setRefreshesInFlight((n) => n - 1))
+    // codesKey, not codes: a new array with the same tickers shouldn't restart the timer.
+  }, [codesKey])
+
+  useEffect(() => {
+    refreshQuotes()
+    const timer = setInterval(refreshQuotes, REFRESH_MS)
+    return () => clearInterval(timer)
+  }, [refreshQuotes])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (!e.metaKey) return
+      if (e.key === 'k') {
+        e.preventDefault()
+        searchRef.current?.focus()
+      } else if (e.key === 'j') {
+        e.preventDefault()
+        if (chatOpen) setChatOpen(false)
+        else openChat()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [chatOpen, openChat])
+
+  const saveWatchlist = (next: WatchlistEntry[]): void => {
+    setWatchlist(next)
+    window.stox
+      .writeWatchlist(next)
+      .then(() => setWatchlistError(null))
+      .catch((e: Error) => setWatchlistError(`Couldn't save pinned stocks: ${e.message}`))
   }
 
-  const needsSetup = status !== null && (!status.eodhd_key || !status.provider_key_present)
+  const togglePin = (entry: WatchlistEntry): void => {
+    if (watchlist.some((e) => e.code === entry.code)) {
+      saveWatchlist(watchlist.filter((e) => e.code !== entry.code))
+    } else {
+      saveWatchlist([...watchlist, entry])
+    }
+  }
+
+  const analyzeInChat = (code: string): void => {
+    openChat()
+    bridge.analyze(code)
+  }
 
   return (
     <div className="app">
       <header className="toolbar">
-        <span className="app-title">stox</span>
+        <button className="app-title" onClick={() => setSelected(null)} title="Dashboard">
+          stox
+        </button>
+        <SearchBox ref={searchRef} onOpen={setSelected} />
         <div className="toolbar-actions">
-          <button onClick={reset}>New chat</button>
-          <button onClick={() => setShowConsiderations(true)}>Considerations</button>
+          {updatedAt && <span className="updated">Updated {fmtTime(updatedAt)}</span>}
+          <button
+            className="refresh-button"
+            onClick={refreshQuotes}
+            disabled={refreshesInFlight > 0}
+            title="Refresh prices"
+            aria-busy={refreshesInFlight > 0}
+          >
+            {refreshesInFlight > 0 && <span className="spinner" aria-hidden />}
+            {refreshesInFlight > 0 ? 'Refreshing…' : 'Refresh'}
+          </button>
           <button onClick={() => setShowSettings(true)}>Settings</button>
+          <button
+            className={chatOpen ? 'primary' : ''}
+            onClick={() => (chatOpen ? setChatOpen(false) : openChat())}
+            title="Toggle research chat (⌘J)"
+          >
+            Chat
+          </button>
         </div>
       </header>
 
-      {needsSetup && (
+      {!hasEodhdKey ? (
         <div className="banner">
-          {!status?.eodhd_key && <span>No EODHD API key set. </span>}
-          {!status?.provider_key_present && <span>No API key for provider "{status?.provider}". </span>}
+          <span>No EODHD API key set, so prices can't load.</span>
           <button onClick={() => setShowSettings(true)}>Open Settings</button>
         </div>
+      ) : (
+        quoteError && <div className="banner">{quoteError}</div>
       )}
+      {watchlistError && <div className="banner">{watchlistError}</div>}
 
-      <div className="transcript" ref={scrollRef}>
-        {transcript.map((item, index) => (
-          <TranscriptRow key={`${item.id}-${index}`} item={item} />
-        ))}
+      <div className="workspace">
+        <main className="main-pane">
+          {selected ? (
+            <StockDetail
+              key={selected.code}
+              entry={selected}
+              quote={quotes[selected.code]}
+              quoteMissing={missing.has(selected.code)}
+              pinned={watchlist.some((e) => e.code === selected.code)}
+              onBack={() => setSelected(null)}
+              onTogglePin={(name) => togglePin({ code: selected.code, name })}
+              onAnalyze={() => analyzeInChat(selected.code)}
+            />
+          ) : (
+            <Dashboard
+              watchlist={watchlist}
+              quotes={quotes}
+              missing={missing}
+              onOpen={setSelected}
+              onUnpin={(code) => saveWatchlist(watchlist.filter((e) => e.code !== code))}
+              onFocusSearch={() => searchRef.current?.focus()}
+            />
+          )}
+        </main>
+
+        {chatStarted && (
+          <div className="chat-slot" hidden={!chatOpen}>
+            <ChatPanel
+              bridge={bridge}
+              onClose={() => setChatOpen(false)}
+              onOpenConsiderations={() => setShowConsiderations(true)}
+              onOpenSettings={() => setShowSettings(true)}
+            />
+          </div>
+        )}
       </div>
-
-      <form
-        className="input-bar"
-        onSubmit={(e) => {
-          e.preventDefault()
-          submit()
-        }}
-      >
-        <textarea
-          value={draft}
-          disabled={isBusy}
-          placeholder="Ask a question, type a ticker, or /price, /analyze, /reset..."
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault()
-              submit()
-            }
-          }}
-        />
-        <button type="submit" disabled={isBusy}>
-          {isBusy ? '…' : 'Send'}
-        </button>
-      </form>
 
       {showConsiderations && (
         <ConsiderationsPanel
-          considerations={considerations}
-          onAdd={addConsideration}
-          onRemove={removeConsideration}
+          considerations={bridge.considerations}
+          onAdd={bridge.addConsideration}
+          onRemove={bridge.removeConsideration}
           onClose={() => setShowConsiderations(false)}
         />
       )}
-      {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} onSaved={refreshStatus} />}
+      {showSettings && (
+        <SettingsPanel
+          onClose={() => setShowSettings(false)}
+          onSaved={() => {
+            refreshStatus()
+            if (chatStarted) bridge.refreshStatus()
+            refreshQuotes()
+          }}
+        />
+      )}
     </div>
   )
 }

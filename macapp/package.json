@@ -2,7 +2,7 @@
   "name": "stox-app",
   "version": "0.1.0",
   "private": true,
-  "description": "Native macOS app for stox, talking to the same Python backend the terminal REPL uses.",
+  "description": "Native macOS app for stox: a stock price and company fundamentals dashboard, with an optional research chat panel backed by the stox Python backend.",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",

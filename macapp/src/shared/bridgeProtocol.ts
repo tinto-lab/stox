@@ -1,7 +1,7 @@
 /**
- * Wire protocol shared with stoxlib/bridge.py (see that module's docstring
- * for the authoritative description). Kept in sync by hand on both sides
- * since main/preload/renderer are three separate TS build roots here.
+ * Wire protocol for the chat panel's Python backend, stoxlib/bridge.py (see
+ * that module's docstring for the authoritative description). Kept in sync
+ * with the Python side by hand; shared by main, preload and renderer.
  */
 
 export type BridgeCommand =

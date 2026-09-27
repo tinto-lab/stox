@@ -1,15 +1,9 @@
-import type { BridgeCommand, BridgeEvent } from './protocol'
+import type { StoxApi } from '../../shared/types'
 
 export {}
 
 declare global {
   interface Window {
-    stox: {
-      send(command: BridgeCommand): void
-      restartBackend(): void
-      onEvent(listener: (event: BridgeEvent) => void): () => void
-      readSettings(): Promise<Record<string, string>>
-      saveSettings(values: Record<string, string>): Promise<void>
-    }
+    stox: StoxApi
   }
 }
