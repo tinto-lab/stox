@@ -180,6 +180,7 @@ export function StockDetail({
   entry,
   quote,
   quoteMissing,
+  refreshing,
   pinned,
   onBack,
   onTogglePin,
@@ -188,6 +189,8 @@ export function StockDetail({
   entry: WatchlistEntry
   quote: Quote | undefined
   quoteMissing: boolean
+  /** A quote refresh is in flight -- the chart dims until the new price lands. */
+  refreshing: boolean
   pinned: boolean
   onBack: () => void
   onTogglePin: (name: string) => void
@@ -268,7 +271,7 @@ export function StockDetail({
         )}
       </div>
 
-      <div className="card chart-card">
+      <div className={`card chart-card ${refreshing ? 'refreshing' : ''}`} aria-busy={refreshing}>
         <div className="chart-toolbar">
           <div className="segmented" role="tablist">
             {RANGES.map((r) => (

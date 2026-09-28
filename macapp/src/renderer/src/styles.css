@@ -539,6 +539,14 @@ button:disabled {
 .price-chart {
   position: relative;
   width: 100%;
+  transition: opacity 0.15s;
+}
+
+/* The chart's last point comes from the live quote, so it dims while one is loading. */
+.chart-card.refreshing .price-chart {
+  opacity: 0.4;
+  filter: grayscale(1);
+  pointer-events: none;
 }
 
 .price-chart svg {

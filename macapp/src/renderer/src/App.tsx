@@ -210,6 +210,7 @@ export default function App() {
               entry={selected}
               quote={quotes[selected.code]}
               quoteMissing={missing.has(selected.code)}
+              refreshing={refreshesInFlight > 0}
               pinned={watchlist.some((e) => e.code === selected.code)}
               onBack={() => setSelected(null)}
               onTogglePin={(name) => togglePin({ code: selected.code, name })}
