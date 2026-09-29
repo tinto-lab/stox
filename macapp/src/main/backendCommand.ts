@@ -16,16 +16,19 @@ export interface BackendCommand {
  * Packaged: spawn the PyInstaller-built backend bundled under
  * Contents/Resources/backend (see macapp/package.json's build.extraResources
  * and the Phase 3 packaging script) -- no system Python required.
+ *
+ * `extraArgs` picks another mode of the same entry point, e.g. `--monitor`
+ * for the news monitor loop (see stox_bridge.py).
  */
-export function resolveBackendCommand(): BackendCommand {
+export function resolveBackendCommand(...extraArgs: string[]): BackendCommand {
   if (app.isPackaged) {
     const backendDir = path.join(process.resourcesPath, 'backend')
-    return { command: path.join(backendDir, 'stox-backend'), args: [], cwd: backendDir }
+    return { command: path.join(backendDir, 'stox-backend'), args: extraArgs, cwd: backendDir }
   }
   const repoRoot = path.resolve(__dirname, '..', '..', '..')
   return {
     command: path.join(repoRoot, '.venv', 'bin', 'python3'),
-    args: [path.join(repoRoot, 'stox_bridge.py')],
+    args: [path.join(repoRoot, 'stox_bridge.py'), ...extraArgs],
     cwd: repoRoot
   }
 }

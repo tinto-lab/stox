@@ -123,6 +123,16 @@ def test_fetch_geo_news_respects_limit():
     assert mock_decode.call_count == 1
 
 
+def test_fetch_geo_news_custom_lookback_without_decoding():
+    with patch("stoxlib.gnews.requests.get", return_value=_feed_response()) as mock_get, \
+         patch("stoxlib.gnews._decode_link") as mock_decode:
+        articles = gnews.fetch_geo_news("Iran", lookback="when:1d", decode_links=False)
+
+    mock_decode.assert_not_called()
+    assert articles[0].link == REDIRECT
+    assert mock_get.call_args[1]["params"]["q"] == "(Iran) when:1d"
+
+
 def test_fetch_geo_news_empty_feed_returns_empty_list():
     empty = b"<rss><channel></channel></rss>"
     with patch("stoxlib.gnews.requests.get", return_value=_feed_response(empty)):

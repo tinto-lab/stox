@@ -168,23 +168,29 @@ def _decode_link(link):
     return url if isinstance(url, str) and url.startswith(("http://", "https://")) else None
 
 
-def fetch_geo_news(query, limit=5):
+def fetch_geo_news(query, limit=5, lookback=_LOOKBACK, decode_links=True):
     """Return recent world-news articles matching a free-text query.
 
     `query` is arbitrary text (e.g. "Taiwan semiconductor export
     controls"), not a ticker -- geopolitical developments aren't indexed by
     symbol the way company news is.
 
+    `lookback` is a Google News `when:` operator (default past week).
+    `decode_links=False` keeps each article's news.google.com redirect link
+    instead of resolving it -- two extra requests per article that a
+    caller only reading headlines (watcher.py, polling every few minutes)
+    doesn't need; the redirect still opens fine in a browser.
+
     Raises GNewsError on total failure (no results just means an empty list).
     """
-    cache_key = (query, limit)
+    cache_key = (query, limit, lookback, decode_links)
     cached = _cache_get(cache_key)
     if cached is not None:
         return cached
 
     # Parenthesized so an OR in the model's query doesn't swallow the date
     # window ("a OR b when:7d" would only limit the b side).
-    params = {"q": "(%s) %s" % (query, _LOOKBACK), **_LOCALE_PARAMS}
+    params = {"q": "(%s) %s" % (query, lookback), **_LOCALE_PARAMS}
     try:
         r = requests.get(RSS_URL, params=params, headers=_HEADERS, timeout=REQUEST_TIMEOUT)
     except requests.RequestException as e:
@@ -197,7 +203,7 @@ def fetch_geo_news(query, limit=5):
         raise GNewsError("couldn't parse server response") from e
 
     articles = [a for a in (_parse(i) for i in root.iter("item")) if a][:max(1, limit)]
-    if articles:
+    if articles and decode_links:
         with ThreadPoolExecutor(max_workers=min(len(articles), _MAX_DECODE_WORKERS)) as pool:
             real_links = list(pool.map(_decode_link, [a.link for a in articles]))
         for a, real in zip(articles, real_links):

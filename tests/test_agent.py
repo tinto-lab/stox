@@ -2,7 +2,7 @@ from unittest.mock import Mock, patch
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from stoxlib import agent, considerations
+from stoxlib import agent, considerations, monitors
 from stoxlib.fundamentals import Fundamentals, FundamentalsError
 from stoxlib.history import Bar, HistoryError
 from stoxlib.news import Article, NewsError
@@ -603,6 +603,34 @@ def test_ask_agent_persists_a_remembered_consideration_across_the_call():
         ("remember_consideration", {"text": "always factor in insider selling"}),
     ]
     assert considerations.load_considerations() == ["always factor in insider selling"]
+
+
+def test_ask_agent_creates_lists_and_deletes_news_monitors():
+    llm = _FakeLLM([
+        AIMessage(content="", tool_calls=[
+            {"name": "create_news_monitor",
+             "args": {"goal": "alert me when oil rises", "queries": ["Iran", "OPEC output"],
+                      "tickers": ["uso"]}, "id": "call1"},
+        ]),
+        AIMessage(content="Watching Iran and OPEC news for you.", tool_calls=[]),
+    ])
+    result = agent.ask_agent("alert me when oil rises", llm=llm)
+
+    assert result.error is None
+    (m,) = monitors.load_monitors()
+    assert (m["goal"], m["queries"], m["tickers"]) == (
+        "alert me when oil rises", ["Iran", "OPEC output"], ["USO"])
+    assert "created monitor %s" % m["id"] in llm.received_messages[1][-1].content
+
+    assert m["id"] in agent.run_list_monitors_tool()
+    assert agent.run_delete_monitor_tool("nope").startswith("error:")
+    assert agent.run_delete_monitor_tool(m["id"]) == "deleted monitor %s" % m["id"]
+    assert agent.run_list_monitors_tool() == "no news monitors"
+
+
+def test_create_news_monitor_rejects_no_queries():
+    assert agent.run_create_monitor_tool("oil", [], []).startswith("error:")
+    assert monitors.load_monitors() == []
 
 
 def test_ask_agent_includes_stored_considerations_in_the_system_prompt():

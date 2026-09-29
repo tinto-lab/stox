@@ -23,6 +23,9 @@ stoxlib/
   fundamentals.py      company fundamentals (yfinance) — Fundamentals, fetch_fundamentals
   history.py           OHLC price history — Bar, fetch_history
   considerations.py    standing factors the agent always weighs, persisted to disk
+  monitors.py          news monitors ("alert me when ...") and their alert log, persisted to disk
+  watcher.py           the news monitor loop: poll, LLM triage, alert (`stox_bridge.py --monitor`)
+  notify.py            alert delivery -- WhatsApp via CallMeBot
   rendering.py         Quote/Article -> rich console output (terminal only)
   providers.py         LLM provider registry (STOX_LLM_PROVIDER -> chat model)
   tool_loop.py          shared LLM tool-calling loop used by agent.py and analysis.py
@@ -183,6 +186,33 @@ this one) automatically includes it in the agent's instructions. Run
 `/considerations` (or `/remembered`) to see what's stored; the file is
 plain text, one consideration per line, safe to hand-edit or delete.
 
+### News alerts (macOS app)
+
+Ask the chat to watch something -- "alert me when crude oil or oil
+shipping prices may rise" -- and the agent calls `create_news_monitor`:
+it works out what news would move that (Iran, Strait of Hormuz, OPEC
+output, tanker rates ...) and the tickers involved (USO, XOM, FRO), and
+saves a monitor to `~/.config/stox/monitors.json`. `list_news_monitors`
+and `delete_news_monitor` manage them from chat; the app's **Alerts**
+panel lists them too, with every alert raised.
+
+While the app is open and any monitor exists, it runs `stoxlib/watcher.py`
+as its own process (`stox_bridge.py --monitor`, separate from the chat
+backend). Every 10 minutes (`STOX_MONITOR_INTERVAL_MIN`) it searches Google
+News for each monitor's queries (past day, headlines only), and sends just
+the headlines it hasn't seen to the LLM in one triage call per monitor. The
+LLM decides which are material developments and which tickers they push
+up or down, and gets recent alerts too so the same story doesn't re-alert
+unless it escalates. A new monitor's first check only records what's
+already out there, so it doesn't alert on old news.
+
+Alerts go to WhatsApp via [CallMeBot](https://www.callmebot.com/blog/free-api-whatsapp-messages/),
+a free personal-use relay: message their bot once to get an API key, then
+set `CALLMEBOT_PHONE` and `CALLMEBOT_APIKEY` in Settings (which also has a
+"send test message" button). Without them, alerts still show in the
+Alerts panel and in `~/.config/stox/alerts.jsonl`. Nothing is monitored
+after the app quits.
+
 ### Ticker format
 
 EODHD uses `SYMBOL.EXCHANGE`. A bare symbol defaults to `.US`:
@@ -318,6 +348,9 @@ before every test so a developer's own shell exports can't leak in):
 | `test_agent.py`       | the tool-calling loop (all four tools), the read_article url allow-list, conversation-history threading/trimming, and considerations being injected into the system prompt, using a fake chat model — no LLM calls |
 | `test_config.py`      | `.env` load order and precedence vs. real env vars         |
 | `test_shell.py`       | input routing, command handling, the REPL loop (canned input) |
+| `test_monitors.py`    | monitor/alert/seen-state file handling |
+| `test_watcher.py`     | the monitor cycle: baseline, dedup, LLM triage parsing, retry after a triage failure, delivery failures |
+| `test_notify.py`      | CallMeBot request building and error detection (mocked) |
 | `test_bridge.py`      | the JSON-lines protocol behind the macOS app: one command in -> the right event(s) out for each command, thread-safe concurrent `/analyze` events, history persistence and `reset` |
 
 The macOS app itself (`macapp/`) has its own toolchain (`npm run typecheck`,
@@ -345,4 +378,6 @@ The macOS app itself (`macapp/`) has its own toolchain (`npm run typecheck`,
 - [x] Native macOS app (Electron + TypeScript/React) driving the same backend via `stox_bridge.py`
 - [x] Package the macOS app into a standalone double-clickable `.app` (PyInstaller-bundled backend, `npm run package:mac`)
 - [ ] Custom app icon (currently the default Electron icon)
+- [x] News monitors with WhatsApp alerts (`create_news_monitor`, the app's Alerts panel)
+- [ ] More alert channels (Telegram, email), and monitoring while the app is closed (launchd)
 - [ ] Apple Developer ID + notarization, if the app is ever distributed beyond local personal use

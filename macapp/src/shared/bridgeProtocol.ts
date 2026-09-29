@@ -55,6 +55,22 @@ export interface BackendExitEvent {
   message: string | null
 }
 
+/** Sent only by the news monitor process (stoxlib/watcher.py), unprompted. */
+export interface AlertEvent {
+  id: null
+  type: 'alert'
+  alert: unknown
+}
+
+/** Sent by the news monitor process after each completed check. */
+export interface MonitorCycleEvent {
+  id: null
+  type: 'monitor_cycle'
+  at: number
+  monitors: number
+  alerts: number
+}
+
 export type BridgeEvent =
   | ToolCallEvent
   | SpecialistStartEvent
@@ -62,3 +78,5 @@ export type BridgeEvent =
   | ResultEvent
   | ErrorEvent
   | BackendExitEvent
+  | AlertEvent
+  | MonitorCycleEvent

@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 
-from . import analysis
+from . import analysis, monitors
 from .considerations import add_consideration, load_considerations
 from .providers import AgentError, build_llm
 from .tool_loop import run_tool_loop
@@ -36,7 +36,13 @@ AGENT_SYSTEM = (
     "call and, if asked for a prediction, a concrete price target or range "
     "with a time horizon, grounded in the analysis. Don't refuse or dodge "
     "these questions and don't lecture about not giving financial advice "
-    "-- the app already shows a disclaimer. Answer in one or two short "
+    "-- the app already shows a disclaimer. When the user asks to be "
+    "alerted or notified about something, or to keep an eye on it, call "
+    "create_news_monitor: work out what news would move it and turn that "
+    "into short news searches (for \"alert me when oil prices may rise\": "
+    "Iran, Strait of Hormuz, OPEC output, Russia oil sanctions, Middle East "
+    "peace talks, tanker attacks) plus the tickers it concerns (USO, XOM, "
+    "FRO), then tell the user what you'll watch. Answer in one or two short "
     "sentences -- a detailed panel of the tool data is printed right after "
     "your answer, so don't restate it."
 )
@@ -148,6 +154,56 @@ def remember_consideration(text: str) -> str:
     return run_remember_consideration_tool(text)
 
 
+def run_create_monitor_tool(goal, queries, tickers):
+    try:
+        m = monitors.add_monitor(goal, queries, tickers)
+    except ValueError as e:
+        return "error: %s" % e
+    return "created monitor %s: goal=%r queries=%s tickers=%s" % (
+        m["id"], m["goal"], m["queries"], m["tickers"])
+
+
+@tool
+def create_news_monitor(goal: str, queries: list[str], tickers: list[str]) -> str:
+    """Start watching breaking news for the user and alert them (WhatsApp)
+    when something material happens. Persists until they delete it.
+
+    `goal` is what the user wants to be alerted about, in their words.
+    `queries` are 3-8 short news searches covering what drives it -- events,
+    places, organizations, policies -- not the goal restated; every word of
+    a query must match a headline, so keep each to 1-4 words (use OR for
+    alternatives). `tickers` are the securities the goal is about or that
+    the news would move (e.g. USO, XOM, FRO for crude oil and tankers).
+    """
+    return run_create_monitor_tool(goal, queries, tickers)
+
+
+def run_list_monitors_tool():
+    found = monitors.load_monitors()
+    if not found:
+        return "no news monitors"
+    return "\n".join("%s: goal=%r queries=%s tickers=%s" % (
+        m["id"], m["goal"], m["queries"], m["tickers"]) for m in found)
+
+
+@tool
+def list_news_monitors() -> str:
+    """List the user's news monitors (id, goal, queries, tickers)."""
+    return run_list_monitors_tool()
+
+
+def run_delete_monitor_tool(monitor_id):
+    if monitors.remove_monitor(monitor_id):
+        return "deleted monitor %s" % monitor_id
+    return "error: no monitor with id %s -- call list_news_monitors" % monitor_id
+
+
+@tool
+def delete_news_monitor(monitor_id: str) -> str:
+    """Stop and delete one news monitor, by the id list_news_monitors gives."""
+    return run_delete_monitor_tool(monitor_id)
+
+
 def ask_agent(query, history=None, llm=None, on_tool_call=None,
               on_analysis_agent_start=None, on_analysis_tool_call=None):
     """Resolve a natural-language query into an AgentResult.
@@ -235,11 +291,19 @@ def ask_agent(query, history=None, llm=None, on_tool_call=None,
             return run_read_article_tool(url)
         if name == "remember_consideration":
             return run_remember_consideration_tool(args.get("text", ""))
+        if name == "create_news_monitor":
+            return run_create_monitor_tool(args.get("goal", ""), args.get("queries", []),
+                                           args.get("tickers", []))
+        if name == "list_news_monitors":
+            return run_list_monitors_tool()
+        if name == "delete_news_monitor":
+            return run_delete_monitor_tool(args.get("monitor_id", ""))
         return "unknown tool"
 
     messages = [SystemMessage(content=_build_system_prompt())] + history + [HumanMessage(content=query)]
     tools = [get_stock_quote, get_stock_news, get_geopolitical_news, get_price_history,
-             get_company_fundamentals, analysis.analyze_stock, read_article, remember_consideration]
+             get_company_fundamentals, analysis.analyze_stock, read_article, remember_consideration,
+             create_news_monitor, list_news_monitors, delete_news_monitor]
 
     try:
         text = run_tool_loop(llm, messages, tools, dispatch, on_tool_call=on_tool_call)

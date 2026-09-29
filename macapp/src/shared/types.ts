@@ -102,6 +102,44 @@ export interface MarketStatus {
   hasEodhdKey: boolean
 }
 
+/** A news monitor, as stoxlib/monitors.py stores it in ~/.config/stox/monitors.json. */
+export interface NewsMonitor {
+  id: string
+  goal: string
+  queries: string[]
+  tickers: string[]
+  created_at: number
+}
+
+export type AlertDirection = 'rise' | 'drop' | 'watch'
+
+/** One alert stoxlib/watcher.py raised, from ~/.config/stox/alerts.jsonl. */
+export interface NewsAlert {
+  id: string
+  monitor_id: string
+  goal: string
+  direction: AlertDirection
+  impacts: { ticker: string; direction: AlertDirection }[]
+  title: string
+  reason: string
+  articles: { title: string; link: string; date: string }[]
+  created_at: number
+  delivered: boolean
+  delivery_error?: string
+}
+
+export interface MonitorsState {
+  monitors: NewsMonitor[]
+  /** Newest first. */
+  alerts: NewsAlert[]
+  /** Whether the monitor process is running (it only runs while a monitor exists). */
+  running: boolean
+  /** Unix seconds of the last completed check, this app session. */
+  lastCheckAt: number | null
+  lastError: string | null
+  whatsappConfigured: boolean
+}
+
 /** What every IPC handler returns, so a failure reaches the renderer as a
  * plain message instead of Electron's "Error invoking remote method ..." wrapper. */
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
@@ -128,4 +166,11 @@ export interface StoxApi {
   saveSettings(values: Record<string, string>): Promise<void>
   getTheme(): Promise<Theme>
   setTheme(theme: Theme): Promise<void>
+  // News monitors -- read from disk by the main process, which also runs the monitor loop.
+  readMonitors(): Promise<MonitorsState>
+  removeMonitor(id: string): Promise<void>
+  /** Sends a WhatsApp test message with the saved settings; rejects with the reason. */
+  sendTestAlert(): Promise<void>
+  /** Called whenever monitors, alerts or the monitor's status change. */
+  onMonitorsChanged(listener: () => void): () => void
 }

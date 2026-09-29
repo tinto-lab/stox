@@ -6,6 +6,7 @@ import { resolveBackendCommand } from './backendCommand'
 import { BridgeProcess } from './bridgeProcess'
 import { readEnvFile, writeEnvFile } from './envFile'
 import { fetchFundamentals, fetchHistory, fetchQuotes, hasEodhdKey, searchSymbols } from './marketData'
+import { MonitorService, sendTestAlert } from './monitors'
 import { applyTheme, getTheme, setTheme } from './preferences'
 import { readWatchlist, writeWatchlist } from './watchlist'
 
@@ -42,6 +43,13 @@ if (!gotSingleInstanceLock) {
 // every backend event by however many times the window had been reopened.
 bridge.onEvent((event) => {
   mainWindow?.webContents.send('bridge:event', event)
+})
+
+// The news monitor loop is its own process, separate from the chat's: it
+// runs from launch (whenever a monitor exists) until quit, window or not,
+// and restarting the chat backend doesn't interrupt it.
+const monitorService = new MonitorService(() => {
+  mainWindow?.webContents.send('monitors:changed')
 })
 
 function createWindow(): void {
@@ -110,7 +118,12 @@ handle('settings:save', (values: Record<string, string>) => {
   // A running backend read its keys at startup; restart it to pick up the new ones.
   // Market data re-reads the file on every request, so it needs nothing.
   if (bridge.running) bridge.restart()
+  monitorService.settingsChanged()
 })
+
+handle('monitors:read', () => monitorService.state())
+handle('monitors:remove', (id: string) => monitorService.remove(id))
+handle('monitors:testAlert', sendTestAlert)
 
 handle('appearance:get', getTheme)
 handle('appearance:set', (theme: Theme) => setTheme(theme))
@@ -120,8 +133,11 @@ app.whenReady().then(() => {
   // flash of the system one.
   applyTheme(getTheme())
   createWindow()
+  monitorService.start()
 })
 
+// The monitor keeps running here on purpose: on macOS the app lives on
+// after its last window closes, and alerts should too.
 app.on('window-all-closed', () => {
   bridge.stop()
   if (process.platform !== 'darwin') app.quit()
@@ -132,6 +148,7 @@ app.on('window-all-closed', () => {
 // BridgeProcess.stop() is a no-op if it's already stopped.
 app.on('before-quit', () => {
   bridge.stop()
+  monitorService.stop()
 })
 
 app.on('activate', () => {

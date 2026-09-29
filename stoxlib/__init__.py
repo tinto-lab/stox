@@ -10,6 +10,9 @@ touch the others:
     rendering.py   turns Quotes/Articles into rich console output
     providers.py   LLM provider registry (Anthropic / DeepSeek / OpenAI / ...)
     agent.py       natural-language question handling via LangChain tool use
+    monitors.py    news monitors and their alert log, persisted to disk
+    watcher.py     the news monitor loop: poll, LLM triage, alert
+    notify.py      alert delivery (WhatsApp via CallMeBot)
     shell.py       the REPL: routes input, owns the Console, wires it together
 
 See stox.py at the project root for the entry point.

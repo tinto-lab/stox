@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Quote, WatchlistEntry } from '../../shared/types'
+import type { MonitorsState, Quote, WatchlistEntry } from '../../shared/types'
+import { AlertsPanel } from './components/AlertsPanel'
 import { ChatPanel } from './components/ChatPanel'
 import { ConsiderationsPanel } from './components/ConsiderationsPanel'
 import { Dashboard } from './components/Dashboard'
@@ -18,6 +19,25 @@ const CHAT_MIN_WIDTH = 320
 // Room the dashboard/stock view always keeps; also enforced in CSS
 // (.chat-slot's max-width) for when the window shrinks after a resize.
 const MAIN_MIN_WIDTH = 420
+
+// When the user last opened the Alerts panel, so the toolbar can count newer alerts.
+const ALERTS_SEEN_KEY = 'stox.alertsSeenAt'
+
+function loadAlertsSeenAt(): number {
+  try {
+    return Number(localStorage.getItem(ALERTS_SEEN_KEY)) || 0
+  } catch {
+    return 0
+  }
+}
+
+function saveAlertsSeenAt(unixSeconds: number): void {
+  try {
+    localStorage.setItem(ALERTS_SEEN_KEY, String(unixSeconds))
+  } catch {
+    // storage unavailable -- the unread count just resets next launch
+  }
+}
 
 function clampChatWidth(width: number): number {
   return Math.round(Math.max(CHAT_MIN_WIDTH, Math.min(width, window.innerWidth - MAIN_MIN_WIDTH)))
@@ -63,6 +83,9 @@ export default function App() {
 
   const [showSettings, setShowSettings] = useState(false)
   const [showConsiderations, setShowConsiderations] = useState(false)
+  const [showAlerts, setShowAlerts] = useState(false)
+  const [monitorsState, setMonitorsState] = useState<MonitorsState | null>(null)
+  const [alertsSeenAt, setAlertsSeenAt] = useState(loadAlertsSeenAt)
   const searchRef = useRef<HTMLInputElement | null>(null)
 
   const openChat = useCallback(() => {
@@ -84,6 +107,28 @@ export default function App() {
       .then(setWatchlist)
       .catch((e: Error) => setWatchlistError(`Couldn't load pinned stocks: ${e.message}`))
   }, [refreshStatus])
+
+  useEffect(() => {
+    const refresh = (): void => {
+      window.stox.readMonitors().then(setMonitorsState).catch(() => undefined)
+    }
+    refresh()
+    return window.stox.onMonitorsChanged(refresh)
+  }, [])
+
+  const unreadAlerts = monitorsState?.alerts.filter((a) => a.created_at > alertsSeenAt).length ?? 0
+
+  // On open and again on close, so alerts that arrive while it's open count as seen.
+  const markAlertsSeen = (): void => {
+    const now = Date.now() / 1000
+    setAlertsSeenAt(now)
+    saveAlertsSeenAt(now)
+  }
+
+  const openAlerts = (): void => {
+    markAlertsSeen()
+    setShowAlerts(true)
+  }
 
   // Quote every pinned ticker plus whatever's open, in one batched request, every minute.
   const codes = useMemo(() => {
@@ -181,6 +226,10 @@ export default function App() {
             {refreshesInFlight > 0 && <span className="spinner" aria-hidden />}
             {refreshesInFlight > 0 ? 'Refreshing…' : 'Refresh'}
           </button>
+          <button onClick={openAlerts} title="News monitors and alerts">
+            Alerts
+            {unreadAlerts > 0 && <span className="toolbar-count">{unreadAlerts}</span>}
+          </button>
           <button onClick={() => setShowSettings(true)}>Settings</button>
           <button
             className={chatOpen ? 'primary' : ''}
@@ -255,6 +304,19 @@ export default function App() {
           onClose={() => setShowConsiderations(false)}
         />
       )}
+      {showAlerts && (
+        <AlertsPanel
+          state={monitorsState}
+          onRemove={(id) => {
+            window.stox.removeMonitor(id).catch(() => undefined)
+          }}
+          onOpenSettings={() => setShowSettings(true)}
+          onClose={() => {
+            markAlertsSeen()
+            setShowAlerts(false)
+          }}
+        />
+      )}
       {showSettings && (
         <SettingsPanel
           onClose={() => setShowSettings(false)}
@@ -262,6 +324,7 @@ export default function App() {
             refreshStatus()
             if (chatStarted) bridge.refreshStatus()
             refreshQuotes()
+            window.stox.readMonitors().then(setMonitorsState).catch(() => undefined)
           }}
         />
       )}

@@ -15,6 +15,7 @@ export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSav
   const [values, setValues] = useState<Record<string, string>>({})
   const [loaded, setLoaded] = useState(false)
   const [theme, setTheme] = useState<Theme | null>(null)
+  const [testStatus, setTestStatus] = useState<string | null>(null)
 
   useEffect(() => {
     window.stox.getTheme().then(setTheme)
@@ -31,6 +32,19 @@ export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSav
   }
 
   const setField = (key: string, value: string) => setValues((prev) => ({ ...prev, [key]: value }))
+
+  // Saves first: the test runs in a separate backend process that reads the saved file.
+  const sendTest = () => {
+    setTestStatus('Sending…')
+    window.stox
+      .saveSettings(values)
+      .then(() => {
+        onSaved()
+        return window.stox.sendTestAlert()
+      })
+      .then(() => setTestStatus('Sent — check WhatsApp.'))
+      .catch((e: Error) => setTestStatus(`Failed: ${e.message}`))
+  }
 
   return (
     <div className="panel-overlay">
@@ -114,6 +128,43 @@ export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSav
                 />
               </label>
             ))}
+
+            <h3 className="settings-section">WhatsApp alerts</h3>
+            <p className="panel-sheet-hint">
+              News alerts are sent through CallMeBot, a free personal WhatsApp relay. Send its bot
+              (+34 684 783 347 as of Sept 2026 — the current number is on{' '}
+              <a href="https://www.callmebot.com/blog/free-api-whatsapp-messages/" target="_blank" rel="noreferrer">
+                callmebot.com
+              </a>
+              ) the message “I allow callmebot to send me messages”; it replies with your API key.
+            </p>
+            <label className="settings-row">
+              <span>Your WhatsApp number (international format)</span>
+              <input
+                value={values.CALLMEBOT_PHONE ?? ''}
+                onChange={(e) => setField('CALLMEBOT_PHONE', e.target.value)}
+                placeholder="+14155550123"
+              />
+            </label>
+            <label className="settings-row">
+              <span>CallMeBot API key</span>
+              <input
+                type="password"
+                value={values.CALLMEBOT_APIKEY ?? ''}
+                onChange={(e) => setField('CALLMEBOT_APIKEY', e.target.value)}
+              />
+            </label>
+            <div className="settings-actions">
+              <button
+                type="button"
+                onClick={sendTest}
+                disabled={!values.CALLMEBOT_PHONE || !values.CALLMEBOT_APIKEY || testStatus === 'Sending…'}
+              >
+                Save and send test message
+              </button>
+              {testStatus && <span className="panel-sheet-hint">{testStatus}</span>}
+            </div>
+
             <button type="submit" className="primary">Save</button>
           </form>
         )}
