@@ -46,9 +46,19 @@ export interface ErrorEvent extends BridgeEventBase {
   message: string
 }
 
+/** Not sent by the Python side: synthesized by the main process's
+ * BridgeProcess when the backend process ends, so requests still in flight
+ * can be dropped. `message` is null when it was stopped deliberately. */
+export interface BackendExitEvent {
+  id: null
+  type: 'backend_exit'
+  message: string | null
+}
+
 export type BridgeEvent =
   | ToolCallEvent
   | SpecialistStartEvent
   | SpecialistToolCallEvent
   | ResultEvent
   | ErrorEvent
+  | BackendExitEvent

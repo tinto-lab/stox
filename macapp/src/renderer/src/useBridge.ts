@@ -63,6 +63,13 @@ export function useBridge(enabled: boolean) {
 
   useEffect(() => {
     const unsubscribe = window.stox.onEvent((event: BridgeEvent) => {
+      if (event.type === 'backend_exit') {
+        // Whatever was in flight died with the process and will never be answered.
+        pending.current.clear()
+        setIsBusy(false)
+        if (event.message) append({ kind: 'error', id: makeId(), message: event.message })
+        return
+      }
       if (event.id === null) {
         if (event.type === 'error') append({ kind: 'error', id: makeId(), message: event.message })
         return
