@@ -130,12 +130,13 @@ describe('shell commands', () => {
 
   it('a question without a provider key fails cleanly', async () => {
     expect(await new Shell().handleLine("what's apple at?")).toBe(true)
-    expect(plain(output)).toContain('✗ no ANTHROPIC_API_KEY set')
+    expect(plain(output)).toContain('✗ no DEEPSEEK_API_KEY set')
   })
 
   it('/think shows and switches thinking mode for DeepSeek only', async () => {
+    process.env.STOX_LLM_PROVIDER = 'openai'
     await new Shell().handleLine('/think on')
-    expect(plain(output)).toContain("can't be switched for provider 'anthropic'")
+    expect(plain(output)).toContain("can't be switched for provider 'openai'")
     process.env.STOX_LLM_PROVIDER = 'deepseek'
     const shell = new Shell()
     await shell.handleLine('/think')

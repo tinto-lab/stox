@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react'
 import { THEMES, type Theme } from '../../../shared/types'
 
-const PROVIDERS = ['anthropic', 'deepseek', 'openai'] as const
+const PROVIDERS = ['deepseek', 'openai'] as const
 
 const THEME_LABELS: Record<Theme, string> = { system: 'System', light: 'Light', dark: 'Dark' }
 
 const CHAT_FIELDS = [
-  { key: 'ANTHROPIC_API_KEY', label: 'Anthropic API key' },
   { key: 'DEEPSEEK_API_KEY', label: 'DeepSeek API key' },
   { key: 'OPENAI_API_KEY', label: 'OpenAI API key' }
 ] as const
@@ -86,7 +85,7 @@ export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSav
             <label className="settings-row">
               <span>LLM provider</span>
               <select
-                value={values.STOX_LLM_PROVIDER ?? 'anthropic'}
+                value={values.STOX_LLM_PROVIDER ?? 'deepseek'}
                 onChange={(e) => setField('STOX_LLM_PROVIDER', e.target.value)}
               >
                 {PROVIDERS.map((p) => (

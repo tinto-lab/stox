@@ -75,9 +75,9 @@ ${bold('setup')}
   Google News -- both free and keyless.
 
   everything except /price needs an LLM provider:
-    STOX_LLM_PROVIDER=anthropic|deepseek|openai  (default: anthropic)
+    STOX_LLM_PROVIDER=deepseek|openai  (default: deepseek)
     STOX_LLM_MODEL=...     optional, each provider has a default
-    ANTHROPIC_API_KEY=...  or DEEPSEEK_API_KEY / OPENAI_API_KEY
+    DEEPSEEK_API_KEY=...  or OPENAI_API_KEY
     STOX_LLM_THINKING=on|off  DeepSeek thinking mode (default: off), or /think
 
   standing considerations persist to ~/.config/stox/considerations.txt --

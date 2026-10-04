@@ -12,7 +12,6 @@ import { clearGeoNewsCache } from '../src/core/gnews'
  */
 const STOX_ENV_VARS = [
   'EODHD_API_KEY',
-  'ANTHROPIC_API_KEY',
   'DEEPSEEK_API_KEY',
   'OPENAI_API_KEY',
   'STOX_LLM_PROVIDER',

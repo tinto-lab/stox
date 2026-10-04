@@ -1,9 +1,7 @@
-import type Anthropic from '@anthropic-ai/sdk'
 import type OpenAI from 'openai'
 import { describe, expect, it, vi } from 'vitest'
 import {
   AgentError,
-  AnthropicChatModel,
   type ChatMessage,
   OpenAIChatModel,
   buildLLM,
@@ -14,7 +12,6 @@ import {
   setThinking,
   thinkingSetting,
   thinkingSupported,
-  toAnthropicMessages,
   toOpenAIMessages
 } from '../src/core/llm'
 import { parseEnvFile, userEnvPath } from '../src/core/config'
@@ -36,11 +33,12 @@ const conversation: ChatMessage[] = [
 ]
 
 describe('provider registry', () => {
-  it('defaults to anthropic and its default model, honoring overrides', () => {
-    expect(currentProviderName()).toBe('anthropic')
-    expect(describeCurrent()).toBe('anthropic/claude-opus-5')
-    process.env.STOX_LLM_PROVIDER = 'DeepSeek'
+  it('defaults to deepseek and its default model, honoring overrides', () => {
+    expect(currentProviderName()).toBe('deepseek')
     expect(describeCurrent()).toBe('deepseek/deepseek-chat')
+    process.env.STOX_LLM_PROVIDER = 'OpenAI'
+    expect(describeCurrent()).toBe('openai/gpt-4o-mini')
+    process.env.STOX_LLM_PROVIDER = 'DeepSeek'
     process.env.STOX_LLM_MODEL = 'deepseek-reasoner'
     expect(describeCurrent()).toBe('deepseek/deepseek-reasoner')
     process.env.STOX_LLM_PROVIDER = 'nope'
@@ -49,7 +47,7 @@ describe('provider registry', () => {
 
   it('refuses an unknown provider or a missing key', () => {
     process.env.STOX_LLM_PROVIDER = 'nope'
-    expect(() => buildLLM()).toThrow(/unknown STOX_LLM_PROVIDER 'nope' -- choose from: anthropic, deepseek, openai/)
+    expect(() => buildLLM()).toThrow(/unknown STOX_LLM_PROVIDER 'nope' -- choose from: deepseek, openai/)
     process.env.STOX_LLM_PROVIDER = 'openai'
     expect(providerKeyPresent()).toBe(false)
     expect(() => buildLLM()).toThrow(AgentError)
@@ -64,90 +62,6 @@ describe('provider registry', () => {
     const llm = buildLLM()
     expect(llm).toBeInstanceOf(OpenAIChatModel)
     expect(llm.name).toBe('deepseek/deepseek-reasoner')
-  })
-})
-
-describe('Anthropic adapter', () => {
-  it('sends parallel tool results back in a single user message', () => {
-    expect(toAnthropicMessages(conversation)).toEqual([
-      { role: 'user', content: [{ type: 'text', text: 'price and news for AAPL?' }] },
-      {
-        role: 'assistant',
-        content: [
-          { type: 'text', text: 'Looking.' },
-          { type: 'tool_use', id: 't1', name: 'get_stock_quote', input: { tickers: ['AAPL'] } },
-          { type: 'tool_use', id: 't2', name: 'get_stock_news', input: { tickers: ['AAPL'] } }
-        ]
-      },
-      {
-        role: 'user',
-        content: [
-          { type: 'tool_result', tool_use_id: 't1', content: 'AAPL.US: price=1' },
-          { type: 'tool_result', tool_use_id: 't2', content: 'no recent news found' }
-        ]
-      },
-      { role: 'assistant', content: [{ type: 'text', text: 'AAPL is at 1.' }] }
-    ])
-  })
-
-  it("echoes the provider's own content (thinking blocks included) verbatim", () => {
-    const raw = [{ type: 'thinking', thinking: '', signature: 'sig' }, { type: 'text', text: 'hi' }]
-    const out = toAnthropicMessages([
-      { role: 'user', text: 'q' },
-      { role: 'assistant', text: 'hi', toolCalls: [], raw: { provider: 'anthropic', content: raw } }
-    ])
-    expect(out[1]).toEqual({ role: 'assistant', content: raw })
-  })
-
-  function fakeClient(response: Partial<Anthropic.Beta.BetaMessage>) {
-    const create = vi.fn().mockResolvedValue({ stop_reason: 'end_turn', stop_details: null, ...response })
-    return { client: { beta: { messages: { create } } } as unknown as Anthropic, create }
-  }
-
-  it('parses text and tool calls, keeps the raw content, and opts into refusal fallbacks', async () => {
-    const content = [
-      { type: 'thinking', thinking: '', signature: 's' },
-      { type: 'text', text: 'Let me check.' },
-      { type: 'tool_use', id: 'tu1', name: 'get_stock_quote', input: { tickers: ['AAPL'] } }
-    ]
-    const { client, create } = fakeClient({ content: content as never, stop_reason: 'tool_use' })
-    const reply = await new AnthropicChatModel('claude-opus-5', client).complete({
-      system: 'sys',
-      messages: [{ role: 'user', text: 'q' }],
-      tools: [{ name: 'get_stock_quote', description: 'd', parameters: { type: 'object', properties: {} } }]
-    })
-    expect(reply.text).toBe('Let me check.')
-    expect(reply.toolCalls).toEqual([{ id: 'tu1', name: 'get_stock_quote', args: { tickers: ['AAPL'] } }])
-    expect(reply.raw).toEqual({ provider: 'anthropic', content })
-    const params = create.mock.calls[0][0]
-    expect(params).toMatchObject({
-      model: 'claude-opus-5',
-      system: 'sys',
-      tools: [{ name: 'get_stock_quote', description: 'd', input_schema: { type: 'object', properties: {} } }],
-      betas: ['server-side-fallback-2026-07-01'],
-      fallbacks: 'default'
-    })
-    expect(params.tool_choice).toBeUndefined()
-  })
-
-  it('leaves fallbacks off for models without them, and can forbid tool use', async () => {
-    const { client, create } = fakeClient({ content: [{ type: 'text', text: 'ok' }] as never })
-    await new AnthropicChatModel('claude-haiku-4-5', client).complete({
-      system: 's',
-      messages: [{ role: 'user', text: 'q' }],
-      tools: [{ name: 't', description: 'd', parameters: {} }],
-      forbidToolUse: true
-    })
-    const params = create.mock.calls[0][0]
-    expect(params.fallbacks).toBeUndefined()
-    expect(params.tool_choice).toEqual({ type: 'none' })
-  })
-
-  it('turns a refusal into an error', async () => {
-    const { client } = fakeClient({ content: [], stop_reason: 'refusal', stop_details: { category: 'cyber' } as never })
-    await expect(
-      new AnthropicChatModel('claude-opus-5', client).complete({ system: 's', messages: [{ role: 'user', text: 'q' }] })
-    ).rejects.toThrow(/declined to answer \(cyber\)/)
   })
 })
 
@@ -220,9 +134,9 @@ describe('DeepSeek thinking mode', () => {
     expect(thinkingSetting()).toBe(true)
     process.env.STOX_LLM_THINKING = 'maybe'
     expect(thinkingSetting()).toBe(false)
-    expect(thinkingSupported()).toBe(false) // anthropic by default
-    process.env.STOX_LLM_PROVIDER = 'deepseek'
-    expect(thinkingSupported()).toBe(true)
+    expect(thinkingSupported()).toBe(true) // deepseek by default
+    process.env.STOX_LLM_PROVIDER = 'openai'
+    expect(thinkingSupported()).toBe(false)
   })
 
   it('setThinking applies at once and is saved to the user .env', () => {
@@ -274,9 +188,9 @@ describe('DeepSeek thinking mode', () => {
     const history: ChatMessage[] = [{ role: 'user', text: 'q' }, reply, { role: 'tool', toolCallId: 'c1', content: 'data' }]
     expect(toOpenAIMessages(history, 'deepseek')[1]).toMatchObject({ reasoning_content: 'I should look up the quote.' })
     expect(toOpenAIMessages(history, 'openai')[1]).not.toHaveProperty('reasoning_content')
-    // An Anthropic turn's raw content is never sent as reasoning.
-    const anthropicTurn: ChatMessage = { role: 'assistant', text: 'x', toolCalls: [], raw: { provider: 'anthropic', content: [] } }
-    expect(toOpenAIMessages([anthropicTurn], 'deepseek')[0]).not.toHaveProperty('reasoning_content')
+    // Another provider's raw content is never sent as reasoning.
+    const otherTurn: ChatMessage = { role: 'assistant', text: 'x', toolCalls: [], raw: { provider: 'openai', content: 'r' } }
+    expect(toOpenAIMessages([otherTurn], 'deepseek')[0]).not.toHaveProperty('reasoning_content')
   })
 })
 

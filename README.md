@@ -2,7 +2,7 @@
 
 A tiny stock research console for looking up stock, ETF, crypto, and FX
 prices and recent financial news, with a natural-language research mode
-backed by a swappable LLM provider (Anthropic, DeepSeek, OpenAI-compatible, ...).
+backed by a swappable LLM provider (DeepSeek, OpenAI, or any OpenAI-compatible API).
 
 There are two frontends on one TypeScript core: the terminal REPL (`./stox`,
 below) and a native macOS app (`macapp/`, see [macOS app](#macos-app)). The
@@ -19,7 +19,7 @@ macapp/                 the Node/TypeScript project: core, CLI, and the Electron
     marketData.ts       EODHD quotes/history/news/search, Yahoo Finance fundamentals
     gnews.ts            Google News RSS world/geopolitical news (free, keyless)
     webfetch.ts         fetches a url and extracts its readable article text
-    llm.ts              LLM provider registry, Anthropic/OpenAI adapters, the shared tool loop
+    llm.ts              LLM provider registry, the OpenAI-compatible adapter, the shared tool loop
     tools.ts            the data-lookup tools the agents call (quote/news/history/...)
     agent.ts            the chat agent: natural-language questions via tool use
     analysis.ts         the /analyze multi-agent trend/fundamentals/news/geopolitics pipeline
@@ -77,10 +77,10 @@ Swap `demo` for your own free key from https://eodhd.com once the wiring
 checks out.
 
 For plain-English questions, also set an LLM provider (defaults to
-`anthropic` if unset):
+`deepseek` if unset):
 
 ```bash
-export STOX_LLM_PROVIDER=deepseek     # anthropic | deepseek | openai
+export STOX_LLM_PROVIDER=deepseek     # deepseek | openai
 export STOX_LLM_MODEL=deepseek-chat   # optional, each provider has a default
 export DEEPSEEK_API_KEY=...           # whichever provider you picked
 ```
@@ -151,15 +151,10 @@ a black box what ran:
 
 ```
 › any news on tesla?
-→ agent (anthropic/claude-opus-5) · any news on tesla?
+→ agent (deepseek/deepseek-chat) · any news on tesla?
   ↳ get_stock_news(tickers=[ 'TSLA' ], limit=5)
 Tesla has a couple of headlines today.
 ```
-
-With the Anthropic provider on a model that supports it, requests opt into
-the API's server-side refusal fallback: if a safety classifier declines a
-request, the API retries it on a fallback model instead of returning a bare
-refusal.
 
 ### Conversation memory
 
@@ -288,7 +283,7 @@ stox reads, so a developer's own keys or files can't leak in or be written:
 | `sources.test.ts`     | Google News parsing, redirect-link decoding and caching, article extraction (mocked fetch) |
 | `webfetch.test.ts`    | article fetching: truncation and error handling            |
 | `stores.test.ts`      | `.env` loading and precedence, considerations |
-| `llm.test.ts`         | provider registry, Anthropic/OpenAI message conversion and parsing, the tool loop's round budget |
+| `llm.test.ts`         | provider registry, OpenAI-format message conversion and parsing, the tool loop's round budget |
 | `tools.test.ts`       | every data tool's result text, full-text fallback, errors  |
 | `agent.test.ts`       | the chat agent with a scripted model: every tool, the read_article allow-list, considerations, history threading/trimming |
 | `analysis.test.ts`    | the four specialists (concurrency, tool slices, search budget, forced final answer) and the aggregator |

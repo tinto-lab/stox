@@ -1,4 +1,3 @@
-import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
 import { writeUserEnv } from './config'
 
@@ -31,8 +30,8 @@ export interface AssistantMessage {
   role: 'assistant'
   text: string
   toolCalls: ToolCall[]
-  /** The provider's own content for this turn (e.g. Anthropic's thinking
-   * blocks), echoed back verbatim on the next request to the same provider. */
+  /** The provider's own content for this turn (e.g. DeepSeek's reasoning),
+   * echoed back on the next request to the same provider. */
   raw?: { provider: string; content: unknown }
 }
 
@@ -71,11 +70,6 @@ interface ProviderConfig {
 }
 
 export const LLM_PROVIDERS: Record<string, ProviderConfig> = {
-  anthropic: {
-    defaultModel: 'claude-opus-5',
-    apiKeyEnv: 'ANTHROPIC_API_KEY',
-    build: (model, apiKey) => new AnthropicChatModel(model, new Anthropic({ apiKey }))
-  },
   deepseek: {
     defaultModel: 'deepseek-chat',
     apiKeyEnv: 'DEEPSEEK_API_KEY',
@@ -94,7 +88,7 @@ export const LLM_PROVIDERS: Record<string, ProviderConfig> = {
 export class AgentError extends Error {}
 
 export function currentProviderName(): string {
-  return (process.env.STOX_LLM_PROVIDER || 'anthropic').toLowerCase()
+  return (process.env.STOX_LLM_PROVIDER || 'deepseek').toLowerCase()
 }
 
 /** '<provider>/<model>' for whatever's configured -- safe to show even if
@@ -144,97 +138,6 @@ export function buildLLM(): ChatModel {
     apiKey,
     cfg.thinkingToggle ? thinkingSetting() : undefined
   )
-}
-
-// -- Anthropic --
-
-// Models that take the server-side refusal fallback: if a safety classifier
-// declines a request, the API re-runs it on a fallback model inside the same
-// call instead of returning a bare refusal.
-const FALLBACK_MODELS = new Set(['claude-fable-5-1', 'claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5'])
-
-export class AnthropicChatModel implements ChatModel {
-  readonly name: string
-
-  constructor(
-    private readonly model: string,
-    private readonly client: Anthropic
-  ) {
-    this.name = `anthropic/${model}`
-  }
-
-  async complete({ system, messages, tools, forbidToolUse, signal }: CompletionRequest): Promise<AssistantMessage> {
-    const fallback = FALLBACK_MODELS.has(this.model)
-    const response = await this.client.beta.messages.create(
-      {
-        model: this.model,
-        max_tokens: 16000,
-        system,
-        messages: toAnthropicMessages(messages),
-        ...(tools?.length
-          ? {
-              tools: tools.map((t) => ({
-                name: t.name,
-                description: t.description,
-                input_schema: t.parameters as Anthropic.Beta.BetaTool.InputSchema
-              })),
-              ...(forbidToolUse ? { tool_choice: { type: 'none' as const } } : {})
-            }
-          : {}),
-        ...(fallback ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const } : {})
-      },
-      { signal }
-    )
-    if (response.stop_reason === 'refusal') {
-      const category = response.stop_details?.category
-      throw new Error(`the model declined to answer${category ? ` (${category})` : ''}`)
-    }
-
-    const text: string[] = []
-    const toolCalls: ToolCall[] = []
-    for (const block of response.content) {
-      if (block.type === 'text') text.push(block.text)
-      else if (block.type === 'tool_use') {
-        toolCalls.push({ id: block.id, name: block.name, args: asArgs(block.input) })
-      }
-    }
-    return {
-      role: 'assistant',
-      text: text.join(''),
-      toolCalls,
-      raw: { provider: 'anthropic', content: response.content }
-    }
-  }
-}
-
-/** Neutral messages -> Anthropic's. Consecutive tool results (and a user
- * note after them) share one user message, which is how the API expects a
- * turn's parallel tool results back. */
-export function toAnthropicMessages(messages: ChatMessage[]): Anthropic.Beta.BetaMessageParam[] {
-  const out: Anthropic.Beta.BetaMessageParam[] = []
-  const userBlocks = (): Anthropic.Beta.BetaContentBlockParam[] => {
-    const last = out[out.length - 1]
-    if (last?.role === 'user' && Array.isArray(last.content)) return last.content
-    const content: Anthropic.Beta.BetaContentBlockParam[] = []
-    out.push({ role: 'user', content })
-    return content
-  }
-
-  for (const m of messages) {
-    if (m.role === 'user') {
-      userBlocks().push({ type: 'text', text: m.text })
-    } else if (m.role === 'tool') {
-      userBlocks().push({ type: 'tool_result', tool_use_id: m.toolCallId, content: m.content })
-    } else if (m.raw?.provider === 'anthropic') {
-      out.push({ role: 'assistant', content: m.raw.content as Anthropic.Beta.BetaContentBlockParam[] })
-    } else {
-      const content: Anthropic.Beta.BetaContentBlockParam[] = []
-      if (m.text) content.push({ type: 'text', text: m.text })
-      for (const call of m.toolCalls) content.push({ type: 'tool_use', id: call.id, name: call.name, input: call.args })
-      out.push({ role: 'assistant', content: content.length ? content : [{ type: 'text', text: '(no reply)' }] })
-    }
-  }
-  return out
 }
 
 // -- OpenAI-compatible (OpenAI, DeepSeek) --

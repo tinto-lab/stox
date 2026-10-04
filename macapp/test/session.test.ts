@@ -176,10 +176,11 @@ describe('ChatSession', () => {
   })
 
   it('reports thinking as unavailable for providers that cannot switch it', async () => {
+    process.env.STOX_LLM_PROVIDER = 'openai'
     const { chat, events, settle } = session()
     chat.handle({ id: 't', cmd: 'set_thinking', enabled: true })
     await settle()
-    expect(events[0]).toMatchObject({ data: { provider: 'anthropic', thinking: null } })
+    expect(events[0]).toMatchObject({ data: { provider: 'openai', thinking: null } })
     expect(process.env.STOX_LLM_THINKING).toBeUndefined()
   })
 
