@@ -205,7 +205,8 @@ export const AGGREGATOR_SYSTEM =
   'work and has no tools of its own. Synthesize a risk assessment: 2-3 bullish factors, 2-3 ' +
   'bearish/risk factors, an overall risk level (low/medium/high), and a directional lean ' +
   "(favorable/neutral/cautious). Fold in the geopolitical analysis where it's actually relevant -- " +
-  "don't force a connection if that specialist found nothing notable. Then give a clear verdict line " +
+  "don't force a connection if that specialist found nothing notable. If an analysis is marked " +
+  "unavailable, work from the others and say briefly what's missing. Then give a clear verdict line " +
   '(Buy, Hold, or Sell) with a one-line reason, and a price outlook: a target price or range over ' +
   "roughly the next 3-6 months with your confidence (low/medium/high). Commit to a call -- don't hedge " +
   'it away or refuse; the user sees a separate disclaimer. Weigh any standing considerations listed ' +
@@ -219,9 +220,18 @@ function aggregatorSystemPrompt(): string {
   return `${AGGREGATOR_SYSTEM}\n\nStanding considerations to weigh:\n${considerations.map((c) => `- ${c}`).join('\n')}`
 }
 
+/** A specialist's result, or -- if it failed -- a stand-in with no data
+ * whose text says so, for the aggregator and the user to see. */
+function orUnavailable<T>(settled: PromiseSettledResult<T>, empty: (text: string) => T): T {
+  if (settled.status === 'fulfilled') return settled.value
+  const reason = settled.reason instanceof Error ? settled.reason.message : String(settled.reason)
+  return empty(`Unavailable -- this analysis failed: ${reason}`)
+}
+
 /** Runs the four specialists concurrently (each hits a different data
- * source and none needs another's output), then the aggregator. Throws on
- * an LLM failure. */
+ * source and none needs another's output), then the aggregator. A failed
+ * specialist leaves a gap the aggregator works around rather than sinking
+ * the other three; throws only if all four fail or the aggregator does. */
 export async function runStockAnalysis(
   llm: ChatModel,
   ticker: string,
@@ -235,12 +245,19 @@ export async function runStockAnalysis(
   })
 
   for (const name of ['trend', 'fundamentals', 'news', 'geopolitics'] as const) onAgentStart?.(name)
-  const [trend, fundamentals, news, geopolitics] = await Promise.all([
+  const settled = await Promise.allSettled([
     runTrendAgent(llm, ticker, hooksFor('trend')),
     runFundamentalsAgent(llm, ticker, hooksFor('fundamentals')),
     runNewsAgent(llm, ticker, hooksFor('news')),
     runGeopoliticsAgent(llm, ticker, hooksFor('geopolitics'))
   ])
+  signal?.throwIfAborted()
+  const failures = settled.flatMap((s) => (s.status === 'rejected' ? [s.reason] : []))
+  if (failures.length === settled.length) throw failures[0]
+  const trend = orUnavailable(settled[0], (text) => ({ text, quotes: [], bars: [] }))
+  const fundamentals = orUnavailable(settled[1], (text) => ({ text, fundamentals: null }))
+  const news = orUnavailable(settled[2], (text) => ({ text, articles: [] }))
+  const geopolitics = orUnavailable(settled[3], (text) => ({ text, articles: [] }))
 
   onAgentStart?.('aggregator')
   const prompt =

@@ -163,7 +163,25 @@ describe('runStockAnalysis', () => {
     )
   })
 
-  it('fails as a whole when a model call fails', async () => {
+  it('works around a failed specialist instead of failing as a whole', async () => {
+    const llm = standardLLM({ news: [] })
+    const result = await runStockAnalysis(llm, 'AAPL')
+    expect(result.newsText).toBe('Unavailable -- this analysis failed: RoutedLLM: no reply left for news')
+    expect(result.articles).toEqual([])
+    expect(result.trendText).toBe('trend analysis')
+    expect(result.verdictText).toBe('Hold, target 230-250.')
+    expect((llm.requestsOf('aggregator')[0].messages[0] as { text: string }).text).toContain(
+      'News analysis:\nUnavailable -- this analysis failed'
+    )
+  })
+
+  it('fails as a whole when every specialist fails', async () => {
+    const llm = standardLLM({ trend: [], fundamentals: [], news: [], geopolitics: [] })
+    await expect(runStockAnalysis(llm, 'AAPL')).rejects.toThrow(/no reply left for trend/)
+    expect(llm.requestsOf('aggregator')).toHaveLength(0)
+  })
+
+  it('fails as a whole when the aggregator fails', async () => {
     const llm = standardLLM({ aggregator: [] })
     await expect(runStockAnalysis(llm, 'AAPL')).rejects.toThrow(/no reply left for aggregator/)
   })
