@@ -85,6 +85,22 @@ export STOX_LLM_MODEL=deepseek-chat   # optional, each provider has a default
 export DEEPSEEK_API_KEY=...           # whichever provider you picked
 ```
 
+### A standalone binary
+
+`./stox` needs Node and `macapp/node_modules`. To get one self-contained
+executable instead (about 60 MB, runtime included), build it with
+[Bun](https://bun.sh) (`brew install oven-sh/bun/bun`):
+
+```bash
+cd macapp
+npm run build:cli        # -> macapp/dist/stox
+cp dist/stox ~/.local/bin/   # or anywhere on your PATH
+```
+
+It runs only on the OS and CPU it was built on. It reads keys the same way
+as `./stox`, except that the repo `.env` is only found on the machine it was
+built on, so put keys in `~/.config/stox/.env` (or export them) anywhere else.
+
 ### Thinking mode (DeepSeek)
 
 DeepSeek models can think before answering: slower, but more careful,

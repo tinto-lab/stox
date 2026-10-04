@@ -9,3 +9,5 @@ macapp/node_modules/
 macapp/out/
 macapp/dist/
 macapp/*.tsbuildinfo
+# Bun leaves temp files behind when `npm run build:cli` compiles the binary.
+macapp/.*.bun-build

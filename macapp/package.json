@@ -12,7 +12,8 @@
     "relaunch": "npm run package:mac && open dist/mac-arm64/Stox.app",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
-    "cli": "tsx src/cli/index.ts"
+    "cli": "tsx src/cli/index.ts",
+    "build:cli": "bun build src/cli/index.ts --compile --minify --outfile dist/stox"
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",
