@@ -17,6 +17,7 @@ export type BridgeCommand =
   | { id: string; cmd: 'considerations_add'; text: string }
   | { id: string; cmd: 'considerations_remove'; text: string }
   | { id: string; cmd: 'status' }
+  | { id: string; cmd: 'set_thinking'; enabled: boolean }
 
 interface BridgeEventBase {
   id: string | null
@@ -42,7 +43,7 @@ export interface SpecialistToolCallEvent extends BridgeEventBase {
 
 /** `data` per command: ask -> AgentResult, analyze -> AnalysisResult,
  * quote -> QuoteResult, considerations_* -> {considerations: string[]},
- * status -> ChatStatus, reset -> {}. */
+ * status and set_thinking -> ChatStatus, reset -> {}. */
 export interface ResultEvent extends BridgeEventBase {
   type: 'result'
   data: unknown

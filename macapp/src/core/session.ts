@@ -1,9 +1,19 @@
 import type { BridgeCommand, BridgeEvent } from '../shared/bridgeProtocol'
+import type { ChatStatus } from '../shared/types'
 import { normalize } from '../shared/symbols'
 import { askAgent, recordAnalysis } from './agent'
 import { runStockAnalysis } from './analysis'
 import { addConsideration, loadConsiderations, removeConsideration } from './considerations'
-import { type ChatMessage, buildLLM, currentProviderName, describeCurrent, providerKeyPresent } from './llm'
+import {
+  type ChatMessage,
+  buildLLM,
+  currentProviderName,
+  describeCurrent,
+  providerKeyPresent,
+  setThinking,
+  thinkingSetting,
+  thinkingSupported
+} from './llm'
 import { fetchQuotes, hasEodhdKey } from './marketData'
 
 /**
@@ -89,15 +99,24 @@ export class ChatSession {
       case 'considerations_remove':
         return result({ considerations: removeConsideration(command.text) })
       case 'status':
-        return result({
-          eodhdKey: hasEodhdKey(),
-          provider: currentProviderName(),
-          model: describeCurrent(),
-          providerKeyPresent: providerKeyPresent()
-        })
+        return result(chatStatus())
+      case 'set_thinking':
+        // Applies from the next model call; the conversation carries on.
+        if (thinkingSupported()) setThinking(command.enabled)
+        return result(chatStatus())
       default:
         this.emit({ id, type: 'error', message: `unknown command: ${(command as { cmd: string }).cmd}` })
     }
+  }
+}
+
+function chatStatus(): ChatStatus {
+  return {
+    eodhdKey: hasEodhdKey(),
+    provider: currentProviderName(),
+    model: describeCurrent(),
+    providerKeyPresent: providerKeyPresent(),
+    thinking: thinkingSupported() ? thinkingSetting() : null
   }
 }
 

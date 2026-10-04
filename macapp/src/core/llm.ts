@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
+import { writeUserEnv } from './config'
 
 /**
  * The LLM layer: a provider registry (STOX_LLM_PROVIDER / STOX_LLM_MODEL ->
@@ -60,7 +61,10 @@ export interface ChatModel {
 interface ProviderConfig {
   defaultModel: string
   apiKeyEnv: string
-  build(model: string, apiKey: string): ChatModel
+  /** Whether thinking can be switched on and off per request (see STOX_LLM_THINKING). */
+  thinkingToggle?: boolean
+  /** `thinking` is STOX_LLM_THINKING for providers with thinkingToggle, else undefined. */
+  build(model: string, apiKey: string, thinking: boolean | undefined): ChatModel
 }
 
 export const LLM_PROVIDERS: Record<string, ProviderConfig> = {
@@ -72,8 +76,9 @@ export const LLM_PROVIDERS: Record<string, ProviderConfig> = {
   deepseek: {
     defaultModel: 'deepseek-chat',
     apiKeyEnv: 'DEEPSEEK_API_KEY',
-    build: (model, apiKey) =>
-      new OpenAIChatModel('deepseek', model, new OpenAI({ apiKey, baseURL: 'https://api.deepseek.com' }))
+    thinkingToggle: true,
+    build: (model, apiKey, thinking) =>
+      new OpenAIChatModel('deepseek', model, new OpenAI({ apiKey, baseURL: 'https://api.deepseek.com' }), thinking)
   },
   openai: {
     defaultModel: 'gpt-4o-mini',
@@ -103,6 +108,23 @@ export function providerKeyPresent(): boolean {
   return Boolean(cfg && process.env[cfg.apiKeyEnv])
 }
 
+export function thinkingSupported(): boolean {
+  return Boolean(LLM_PROVIDERS[currentProviderName()]?.thinkingToggle)
+}
+
+/** STOX_LLM_THINKING: on, or off (the default -- faster and cheaper). */
+export function thinkingSetting(): boolean {
+  return ['on', 'true', '1', 'yes'].includes((process.env.STOX_LLM_THINKING ?? '').trim().toLowerCase())
+}
+
+/** Switches thinking for every later request, and saves the choice to
+ * ~/.config/stox/.env so the CLI and the app share it. */
+export function setThinking(enabled: boolean): void {
+  const value = enabled ? 'on' : 'off'
+  process.env.STOX_LLM_THINKING = value
+  writeUserEnv({ STOX_LLM_THINKING: value })
+}
+
 /** A ChatModel for the configured provider; throws AgentError if it can't be used. */
 export function buildLLM(): ChatModel {
   const provider = currentProviderName()
@@ -114,7 +136,11 @@ export function buildLLM(): ChatModel {
   }
   const apiKey = process.env[cfg.apiKeyEnv]
   if (!apiKey) throw new AgentError(`no ${cfg.apiKeyEnv} set for provider '${provider}' -- see /help`)
-  return cfg.build(process.env.STOX_LLM_MODEL || cfg.defaultModel, apiKey)
+  return cfg.build(
+    process.env.STOX_LLM_MODEL || cfg.defaultModel,
+    apiKey,
+    cfg.thinkingToggle ? thinkingSetting() : undefined
+  )
 }
 
 // -- Anthropic --
@@ -213,10 +239,13 @@ export function toAnthropicMessages(messages: ChatMessage[]): Anthropic.Beta.Bet
 export class OpenAIChatModel implements ChatModel {
   readonly name: string
 
+  /** `thinking` (DeepSeek only): true/false sends DeepSeek's `thinking`
+   * switch with every request; undefined leaves the model's default. */
   constructor(
-    provider: string,
+    private readonly provider: string,
     private readonly model: string,
-    private readonly client: OpenAI
+    private readonly client: OpenAI,
+    private readonly thinking?: boolean
   ) {
     this.name = `${provider}/${model}`
   }
@@ -225,7 +254,8 @@ export class OpenAIChatModel implements ChatModel {
     const response = await this.client.chat.completions.create(
       {
         model: this.model,
-        messages: [{ role: 'system', content: system }, ...toOpenAIMessages(messages)],
+        messages: [{ role: 'system', content: system }, ...toOpenAIMessages(messages, this.provider)],
+        ...(this.thinking === undefined ? {} : { thinking: { type: this.thinking ? 'enabled' : 'disabled' } }),
         ...(tools?.length
           ? {
               tools: tools.map((t) => ({
@@ -250,17 +280,29 @@ export class OpenAIChatModel implements ChatModel {
       }
       toolCalls.push({ id: call.id, name: call.function.name, args: asArgs(args) })
     }
-    return { role: 'assistant', text: message?.content ?? '', toolCalls }
+    // DeepSeek's thinking mode returns the reasoning alongside the answer.
+    // With tools in the request it must be sent back on later requests (a
+    // 400 otherwise), so it rides along in `raw`.
+    const reasoning = (message as { reasoning_content?: unknown } | undefined)?.reasoning_content
+    return {
+      role: 'assistant',
+      text: message?.content ?? '',
+      toolCalls,
+      ...(typeof reasoning === 'string' && reasoning ? { raw: { provider: this.provider, content: reasoning } } : {})
+    }
   }
 }
 
-export function toOpenAIMessages(messages: ChatMessage[]): OpenAI.Chat.ChatCompletionMessageParam[] {
+/** Neutral messages -> chat completions messages. An assistant turn
+ * `provider` itself produced gets its reasoning_content back. */
+export function toOpenAIMessages(messages: ChatMessage[], provider = 'openai'): OpenAI.Chat.ChatCompletionMessageParam[] {
   return messages.map((m): OpenAI.Chat.ChatCompletionMessageParam => {
     if (m.role === 'user') return { role: 'user', content: m.text }
     if (m.role === 'tool') return { role: 'tool', tool_call_id: m.toolCallId, content: m.content }
     return {
       role: 'assistant',
       content: m.text || null,
+      ...(m.raw?.provider === provider && typeof m.raw.content === 'string' ? { reasoning_content: m.raw.content } : {}),
       ...(m.toolCalls.length
         ? {
             tool_calls: m.toolCalls.map((c) => ({

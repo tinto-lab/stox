@@ -158,6 +158,8 @@ export interface ChatStatus {
   provider: string
   model: string
   providerKeyPresent: boolean
+  /** Thinking mode on/off, or null when the provider can't switch it. */
+  thinking: boolean | null
 }
 
 /** What every IPC handler returns, so a failure reaches the renderer as a

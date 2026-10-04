@@ -48,7 +48,7 @@ export function ChatPanel({
   onOpenConsiderations: () => void
   onOpenSettings: () => void
 }) {
-  const { transcript, isBusy, status, reset } = bridge
+  const { transcript, isBusy, status, reset, setThinking } = bridge
   const [draft, setDraft] = useState('')
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
@@ -74,6 +74,16 @@ export function ChatPanel({
       <header className="chat-header">
         <span className="chat-title">Research chat</span>
         <div className="chat-actions">
+          {status && status.thinking !== null && (
+            <button
+              className={status.thinking ? 'primary' : ''}
+              onClick={() => setThinking(!status.thinking)}
+              aria-pressed={status.thinking}
+              title="Thinking mode: deeper answers, but slower. Applies from the next question."
+            >
+              Thinking {status.thinking ? 'on' : 'off'}
+            </button>
+          )}
           <button onClick={reset} title="Start a new conversation">
             New
           </button>

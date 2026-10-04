@@ -85,6 +85,16 @@ export STOX_LLM_MODEL=deepseek-chat   # optional, each provider has a default
 export DEEPSEEK_API_KEY=...           # whichever provider you picked
 ```
 
+### Thinking mode (DeepSeek)
+
+DeepSeek models can think before answering: slower, but more careful,
+especially for `/analyze`. It's off by default. Switch it any time with
+`/think on` / `/think off` in the CLI or the **Thinking** button in the
+app's chat panel. It applies from the next question, the conversation
+carries on, and the choice is saved as `STOX_LLM_THINKING` in
+`~/.config/stox/.env`, so the CLI and the app share it. Other providers
+keep their model's own behavior and don't show the switch.
+
 ### Line editing
 
 The prompt supports normal terminal line editing: left/right arrows, up/down
@@ -117,6 +127,7 @@ Commands:
 | `/clear`       | clear the screen                                           |
 | `/reset`       | forget the conversation so far (also `/new`)               |
 | `/considerations` | list standing factors the agent always weighs (also `/remembered`) |
+| `/think [on\|off]` | show or switch thinking mode (DeepSeek)                  |
 | `/quit`        | leave (also `/exit`, Ctrl-D)                               |
 
 The agent has tools for quotes, price history, fundamentals and news. News

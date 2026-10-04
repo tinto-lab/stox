@@ -6,7 +6,16 @@ import { askAgent, recordAnalysis } from '../core/agent'
 import { runStockAnalysis } from '../core/analysis'
 import { configDir } from '../core/config'
 import { considerationsPath, loadConsiderations } from '../core/considerations'
-import { type ChatMessage, buildLLM, describeCurrent, providerKeyPresent } from '../core/llm'
+import {
+  type ChatMessage,
+  buildLLM,
+  currentProviderName,
+  describeCurrent,
+  providerKeyPresent,
+  setThinking,
+  thinkingSetting,
+  thinkingSupported
+} from '../core/llm'
 import { fetchQuotes, hasEodhdKey } from '../core/marketData'
 import { normalize } from '../shared/symbols'
 import { bold, dim, panel, showAnalysis, showQuotes, showResultData, style } from './render'
@@ -44,6 +53,8 @@ const HELP = `${bold('commands')}
   /clear           clear the screen
   /reset           forget the conversation so far (also /new)
   /considerations  list standing factors the agent always weighs (also /remembered)
+  /think [on|off]  show or switch thinking mode (DeepSeek) -- deeper answers,
+                   but slower; saved for next time, shared with the app
   /quit  /exit     leave
   ctrl+c           cancel a running question, or leave at the prompt
 
@@ -66,6 +77,7 @@ ${bold('setup')}
     STOX_LLM_PROVIDER=anthropic|deepseek|openai  (default: anthropic)
     STOX_LLM_MODEL=...     optional, each provider has a default
     ANTHROPIC_API_KEY=...  or DEEPSEEK_API_KEY / OPENAI_API_KEY
+    STOX_LLM_THINKING=on|off  DeepSeek thinking mode (default: off), or /think
 
   standing considerations persist to ~/.config/stox/considerations.txt --
   plain text, one per line, safe to hand-edit or delete.`
@@ -127,6 +139,9 @@ export class Shell {
       case '/remembered':
         this.showConsiderations()
         break
+      case '/think':
+        this.handleThink(rest[0])
+        break
       case '/analyze':
         if (!rest[0]) print(`${style('red', 'usage:')} /analyze <ticker>`)
         else await this.handleAnalyze(rest[0])
@@ -146,6 +161,21 @@ export class Shell {
     if (!this.running) return false
     this.running.abort()
     return true
+  }
+
+  /** Thinking applies from the next question on; the conversation carries on. */
+  private handleThink(arg?: string): void {
+    if (!thinkingSupported()) {
+      print(dim(`thinking mode can't be switched for provider '${currentProviderName()}' -- only for deepseek.`))
+      return
+    }
+    const choice = arg?.toLowerCase()
+    if (choice === 'on' || choice === 'off') setThinking(choice === 'on')
+    else if (choice) {
+      print(`${style('red', 'usage:')} /think [on|off]`)
+      return
+    }
+    print(dim(`thinking mode: ${thinkingSetting() ? 'on' : 'off'}`))
   }
 
   private showConsiderations(): void {
@@ -257,7 +287,8 @@ export async function runRepl(): Promise<void> {
   if (!providerKeyPresent()) {
     print(`${style('yellow', '!')} no LLM provider configured -- plain-English questions won't work -- see ${bold('/help')}.\n`)
   } else {
-    print(dim(`LLM provider: ${describeCurrent()}`) + '\n')
+    const thinking = thinkingSupported() ? ` · thinking ${thinkingSetting() ? 'on' : 'off'} (/think)` : ''
+    print(dim(`LLM provider: ${describeCurrent()}${thinking}`) + '\n')
   }
 
   const shell = new Shell()

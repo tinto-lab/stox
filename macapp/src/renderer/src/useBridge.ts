@@ -121,7 +121,7 @@ export function useBridge(enabled: boolean) {
           break
         }
         default: {
-          // considerations_list / considerations_add / considerations_remove / status
+          // considerations_list / considerations_add / considerations_remove / status / set_thinking
           const data = event.data as Partial<{ considerations: string[] } & ChatStatus>
           if (data.considerations) setConsiderations(data.considerations)
           if (data.provider) setStatus(data as ChatStatus)
@@ -186,6 +186,11 @@ export function useBridge(enabled: boolean) {
     window.stox.send({ id: makeId(), cmd: 'considerations_remove', text })
   }, [])
 
+  // Answered with the updated status, which the default branch above picks up.
+  const setThinking = useCallback((enabled: boolean) => {
+    window.stox.send({ id: makeId(), cmd: 'set_thinking', enabled })
+  }, [])
+
   return {
     transcript,
     isBusy,
@@ -197,6 +202,7 @@ export function useBridge(enabled: boolean) {
     reset,
     addConsideration,
     removeConsideration,
+    setThinking,
     refreshStatus
   }
 }

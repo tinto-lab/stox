@@ -115,7 +115,30 @@ describe('ChatSession', () => {
     expect(data_['2']).toEqual({ considerations: ['tariffs', 'insider selling'] })
     expect(data_['3']).toEqual({ considerations: ['insider selling'] })
     expect(data_['4']).toEqual({ considerations: ['insider selling'] })
-    expect(data_['5']).toEqual({ eodhdKey: false, provider: 'deepseek', model: 'deepseek/deepseek-chat', providerKeyPresent: true })
+    expect(data_['5']).toEqual({
+      eodhdKey: false,
+      provider: 'deepseek',
+      model: 'deepseek/deepseek-chat',
+      providerKeyPresent: true,
+      thinking: false
+    })
+  })
+
+  it('switches thinking mode, answering with the new status', async () => {
+    process.env.STOX_LLM_PROVIDER = 'deepseek'
+    const { chat, events, settle } = session()
+    chat.handle({ id: 't', cmd: 'set_thinking', enabled: true })
+    await settle()
+    expect(events[0]).toMatchObject({ id: 't', type: 'result', data: { thinking: true } })
+    expect(process.env.STOX_LLM_THINKING).toBe('on')
+  })
+
+  it('reports thinking as unavailable for providers that cannot switch it', async () => {
+    const { chat, events, settle } = session()
+    chat.handle({ id: 't', cmd: 'set_thinking', enabled: true })
+    await settle()
+    expect(events[0]).toMatchObject({ data: { provider: 'anthropic', thinking: null } })
+    expect(process.env.STOX_LLM_THINKING).toBeUndefined()
   })
 
   it('rejects an unknown command', async () => {

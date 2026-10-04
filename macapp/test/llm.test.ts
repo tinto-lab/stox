@@ -11,9 +11,13 @@ import {
   describeCurrent,
   providerKeyPresent,
   runToolLoop,
+  setThinking,
+  thinkingSetting,
+  thinkingSupported,
   toAnthropicMessages,
   toOpenAIMessages
 } from '../src/core/llm'
+import { parseEnvFile, userEnvPath } from '../src/core/config'
 import { FakeLLM, call, calls, say } from './helpers'
 
 const conversation: ChatMessage[] = [
@@ -201,6 +205,78 @@ describe('OpenAI-compatible adapter', () => {
       function: { name: 'get_stock_quote', description: 'd', parameters: { type: 'object' } }
     })
     expect(params.tool_choice).toBe('none')
+  })
+})
+
+describe('DeepSeek thinking mode', () => {
+  function fakeOpenAI(message: Record<string, unknown>) {
+    const create = vi.fn().mockResolvedValue({ choices: [{ message }] })
+    return { client: { chat: { completions: { create } } } as unknown as OpenAI, create }
+  }
+
+  it('is off unless STOX_LLM_THINKING says on, and only DeepSeek can switch it', () => {
+    expect(thinkingSetting()).toBe(false)
+    process.env.STOX_LLM_THINKING = 'ON'
+    expect(thinkingSetting()).toBe(true)
+    process.env.STOX_LLM_THINKING = 'maybe'
+    expect(thinkingSetting()).toBe(false)
+    expect(thinkingSupported()).toBe(false) // anthropic by default
+    process.env.STOX_LLM_PROVIDER = 'deepseek'
+    expect(thinkingSupported()).toBe(true)
+  })
+
+  it('setThinking applies at once and is saved to the user .env', () => {
+    setThinking(true)
+    expect(thinkingSetting()).toBe(true)
+    expect(parseEnvFile(userEnvPath()).STOX_LLM_THINKING).toBe('on')
+    setThinking(false)
+    expect(parseEnvFile(userEnvPath()).STOX_LLM_THINKING).toBe('off')
+  })
+
+  it('buildLLM sends the switch for DeepSeek, following the setting', async () => {
+    process.env.STOX_LLM_PROVIDER = 'deepseek'
+    process.env.DEEPSEEK_API_KEY = 'k'
+    process.env.STOX_LLM_THINKING = 'on'
+    const llm = buildLLM() as OpenAIChatModel
+    const create = vi.fn().mockResolvedValue({ choices: [{ message: { content: 'hi' } }] })
+    ;(llm as unknown as { client: unknown }).client = { chat: { completions: { create } } }
+    await llm.complete({ system: 's', messages: [{ role: 'user', text: 'q' }] })
+    expect(create.mock.calls[0][0].thinking).toEqual({ type: 'enabled' })
+  })
+
+  it('sends thinking enabled/disabled, or nothing when not set', async () => {
+    for (const [thinking, expected] of [
+      [true, { type: 'enabled' }],
+      [false, { type: 'disabled' }],
+      [undefined, undefined]
+    ] as const) {
+      const { client, create } = fakeOpenAI({ content: 'ok' })
+      await new OpenAIChatModel('deepseek', 'deepseek-flash', client, thinking).complete({
+        system: 's',
+        messages: [{ role: 'user', text: 'q' }]
+      })
+      expect(create.mock.calls[0][0].thinking).toEqual(expected)
+    }
+  })
+
+  it('keeps reasoning_content and sends it back on later requests, but only to its own provider', async () => {
+    const { client } = fakeOpenAI({
+      content: '',
+      reasoning_content: 'I should look up the quote.',
+      tool_calls: [{ id: 'c1', type: 'function', function: { name: 'get_stock_quote', arguments: '{}' } }]
+    })
+    const reply = await new OpenAIChatModel('deepseek', 'deepseek-flash', client, true).complete({
+      system: 's',
+      messages: [{ role: 'user', text: 'q' }]
+    })
+    expect(reply.raw).toEqual({ provider: 'deepseek', content: 'I should look up the quote.' })
+
+    const history: ChatMessage[] = [{ role: 'user', text: 'q' }, reply, { role: 'tool', toolCallId: 'c1', content: 'data' }]
+    expect(toOpenAIMessages(history, 'deepseek')[1]).toMatchObject({ reasoning_content: 'I should look up the quote.' })
+    expect(toOpenAIMessages(history, 'openai')[1]).not.toHaveProperty('reasoning_content')
+    // An Anthropic turn's raw content is never sent as reasoning.
+    const anthropicTurn: ChatMessage = { role: 'assistant', text: 'x', toolCalls: [], raw: { provider: 'anthropic', content: [] } }
+    expect(toOpenAIMessages([anthropicTurn], 'deepseek')[0]).not.toHaveProperty('reasoning_content')
   })
 })
 

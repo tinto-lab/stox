@@ -16,7 +16,8 @@ const STOX_ENV_VARS = [
   'DEEPSEEK_API_KEY',
   'OPENAI_API_KEY',
   'STOX_LLM_PROVIDER',
-  'STOX_LLM_MODEL'
+  'STOX_LLM_MODEL',
+  'STOX_LLM_THINKING'
 ]
 
 let home: string

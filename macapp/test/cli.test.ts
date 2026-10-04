@@ -132,6 +132,20 @@ describe('shell commands', () => {
     expect(plain(output)).toContain('✗ no ANTHROPIC_API_KEY set')
   })
 
+  it('/think shows and switches thinking mode for DeepSeek only', async () => {
+    await new Shell().handleLine('/think on')
+    expect(plain(output)).toContain("can't be switched for provider 'anthropic'")
+    process.env.STOX_LLM_PROVIDER = 'deepseek'
+    const shell = new Shell()
+    await shell.handleLine('/think')
+    expect(plain(output)).toContain('thinking mode: off')
+    await shell.handleLine('/think on')
+    expect(plain(output)).toContain('thinking mode: on')
+    expect(process.env.STOX_LLM_THINKING).toBe('on')
+    await shell.handleLine('/think sideways')
+    expect(plain(output)).toContain('usage: /think [on|off]')
+  })
+
   it('/quit and /exit leave', async () => {
     expect(await new Shell().handleLine('/quit')).toBe(false)
     expect(await new Shell().handleLine('/EXIT')).toBe(false)
