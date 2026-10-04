@@ -1,5 +1,0 @@
-#!/bin/sh
-# stox -- the terminal research console. Runs the TypeScript CLI in
-# src/cli/ from source; needs `npm install` once.
-dir="$(cd "$(dirname "$0")" && pwd)"
-exec "$dir/node_modules/.bin/tsx" "$dir/src/cli/index.ts" "$@"

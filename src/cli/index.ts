@@ -3,11 +3,12 @@ import { loadEnv } from '../core/config'
 import { runRepl } from './shell'
 
 /**
- * stox -- the terminal research console (`./stox` at the repo root).
+ * stox -- the terminal research console (`npm run cli`, or the `npm run
+ * build:cli` binary).
  */
 
-// Run from source by tsx, so this file sits at src/cli/: the repo root, and
-// its optional .env, is two levels up.
+// This file sits at src/cli/, so the repo root and its optional .env are two
+// levels up. Bun's compiled binary keeps this source path too.
 loadEnv(path.resolve(__dirname, '..', '..', '.env'))
 
 async function main(command = ''): Promise<void> {

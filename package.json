@@ -12,8 +12,8 @@
     "relaunch": "npm run package:mac && open dist/mac-arm64/Stox.app",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
-    "cli": "tsx src/cli/index.ts",
-    "build:cli": "bun build src/cli/index.ts --compile --minify --outfile dist/stox"
+    "cli": "bun src/cli/index.ts",
+    "build:cli": "bun build src/cli/index.ts --compile --minify --outfile dist/stox && rm -f .*.bun-build"
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",
@@ -32,7 +32,6 @@
     "electron": "^44.4.5",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
-    "tsx": "^4.23.15",
     "typescript": "~5.9.3",
     "vite": "^6.3.6",
     "vitest": "^5.0.3"

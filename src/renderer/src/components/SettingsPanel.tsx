@@ -58,8 +58,8 @@ export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSav
         )}
         <h3 className="settings-section">API keys</h3>
         <p className="panel-sheet-hint">
-          Saved to ~/.config/stox/.env — the same file the terminal CLI reads, so a key set here is
-          also picked up by `./stox`.
+          Saved to ~/.config/stox/.env — the same file the terminal CLI reads, so a key set here
+          works there too.
         </p>
         {loaded && (
           <form

@@ -4,7 +4,7 @@ A tiny stock research console for looking up stock, ETF, crypto, and FX
 prices and recent financial news, with a natural-language research mode
 backed by a swappable LLM provider (DeepSeek, OpenAI, or any OpenAI-compatible API).
 
-There are two frontends on one TypeScript core: the terminal REPL (`./stox`,
+There are two frontends on one TypeScript core: the terminal REPL (`stox`,
 below) and a native macOS app (see [macOS app](#macos-app)). The
 app is a stock price and fundamentals dashboard, with the REPL's research
 chat available as a side panel.
@@ -12,7 +12,6 @@ chat available as a side panel.
 ## Layout
 
 ```
-stox                    terminal entry point (`./stox`) -- runs src/cli/ via tsx
 src/core/               everything both frontends share -- no Electron, no UI
   config.ts             ~/.config/stox/ and .env loading
   marketData.ts         EODHD quotes/history/news/search, Yahoo Finance fundamentals
@@ -37,7 +36,8 @@ Each core module has one job; the module comments say which.
 
 ## Requirements
 
-- Node.js 22+ (developed on 24)
+- Node.js 22+ (developed on 24) -- installs dependencies, runs the app and tests
+- [Bun](https://bun.sh) (`brew install oven-sh/bun/bun`) -- runs and builds the CLI
 - An EODHD API key — the free `demo` key works for testing, no signup
 - For plain-English questions: an API key for whichever LLM provider you pick
 
@@ -47,7 +47,8 @@ Each core module has one job; the module comments say which.
 npm install       # one time
 ```
 
-That's all -- `./stox` at the repo root runs the CLI from source.
+That's all -- `npm run cli` runs the CLI from source. For a `stox` command
+you can run from anywhere, build the [standalone binary](#a-standalone-binary).
 
 ## Running it
 
@@ -56,7 +57,7 @@ That's all -- `./stox` at the repo root runs the CLI from source.
 ```bash
 cp .env.example .env      # repo-local; or ~/.config/stox/.env for every checkout
 $EDITOR .env               # fill in the keys you need
-./stox
+npm run cli
 ```
 
 Both files are loaded automatically on startup (the repo `.env` overrides the
@@ -68,7 +69,7 @@ there works in the CLI too. `.env` is git-ignored — never commit it.
 
 ```bash
 export EODHD_API_KEY=demo      # test key — see supported tickers below
-./stox
+npm run cli
 ```
 
 Swap `demo` for your own free key from https://eodhd.com once the wiring
@@ -85,9 +86,8 @@ export DEEPSEEK_API_KEY=...           # whichever provider you picked
 
 ### A standalone binary
 
-`./stox` needs Node and `node_modules`. To get one self-contained
-executable instead (about 60 MB, runtime included), build it with
-[Bun](https://bun.sh) (`brew install oven-sh/bun/bun`):
+`npm run cli` needs Bun and `node_modules`. To get one self-contained
+`stox` executable instead (about 60 MB, Bun's runtime included):
 
 ```bash
 npm run build:cli        # -> dist/stox
@@ -95,7 +95,7 @@ cp dist/stox ~/.local/bin/   # or anywhere on your PATH
 ```
 
 It runs only on the OS and CPU it was built on. It reads keys the same way
-as `./stox`, except that the repo `.env` is only found on the machine it was
+as `npm run cli`, except that the repo `.env` is only found on the machine it was
 built on, so put keys in `~/.config/stox/.env` (or export them) anywhere else.
 
 ### Thinking mode (DeepSeek)

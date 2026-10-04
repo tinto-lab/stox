@@ -9,5 +9,6 @@ node_modules/
 out/
 dist/
 *.tsbuildinfo
-# Bun leaves temp files behind when `npm run build:cli` compiles the binary.
+# Bun leaves temp files behind when it compiles the binary; `npm run
+# build:cli` deletes them, a bare `bun build --compile` does not.
 .*.bun-build
