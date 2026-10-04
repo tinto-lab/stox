@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { data } from './mocks'
-import { AGENT_SYSTEM, MAX_HISTORY_TURNS, askAgent, recordAnalysis, trimHistory } from '../src/core/agent'
+import { AGENT_SYSTEM, MAX_AGENT_ROUNDS, MAX_HISTORY_TURNS, askAgent, recordAnalysis, trimHistory } from '../src/core/agent'
 import { formatAnalysisForAgent } from '../src/core/analysis'
 import { addConsideration, loadConsiderations } from '../src/core/considerations'
 import type { ChatMessage, ToolCall } from '../src/core/llm'
@@ -174,6 +174,20 @@ describe('askAgent', () => {
     const llm = new FakeLLM([calls(bogus), say('Sorry.')])
     expect((await askAgent(llm, 'q')).text).toBe('Sorry.')
     expect(resultFor(llm, bogus)).toBe('unknown tool')
+  })
+
+  it(`forces an answer after ${MAX_AGENT_ROUNDS} rounds of tool calls`, async () => {
+    data.fetchQuotes.mockResolvedValue({ quotes: [quote()], missing: [] })
+    const llm = new FakeLLM([
+      ...Array.from({ length: MAX_AGENT_ROUNDS }, () => calls(call('get_stock_quote', { tickers: ['AAPL'] }))),
+      say('AAPL is at 230.')
+    ])
+    const result = await askAgent(llm, 'price?')
+    expect(result.text).toBe('AAPL is at 230.')
+    expect(llm.requests).toHaveLength(MAX_AGENT_ROUNDS + 1)
+    const final = llm.requests.at(-1)!
+    expect(final.forbidToolUse).toBe(true)
+    expect((final.messages.at(-1) as { text: string }).text).toMatch(/used up your tool-call budget/)
   })
 
   it('sends prior history and appends this turn to it in place', async () => {

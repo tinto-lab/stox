@@ -72,6 +72,15 @@ const ALL_TOOLS: ToolSpec[] = [
 
 export const MAX_HISTORY_TURNS = 6
 
+/** Model calls per question before the loop forces an answer. Generous --
+ * a real question takes 2-3 -- it only stops a model that keeps calling
+ * tools from spinning until the user hits ctrl+c. */
+export const MAX_AGENT_ROUNDS = 10
+
+const BUDGET_EXHAUSTED_NOTICE =
+  "You've used up your tool-call budget for this question. Answer now using only what you've " +
+  'already found above -- no more tool calls.'
+
 /** Drops the oldest whole turns past MAX_HISTORY_TURNS. A turn always
  * starts at a user message, the only place a cut can't separate a tool
  * call from its result. */
@@ -223,6 +232,8 @@ export async function askAgent(
     messages,
     tools: ALL_TOOLS,
     dispatch,
+    maxRounds: MAX_AGENT_ROUNDS,
+    budgetExhaustedNotice: BUDGET_EXHAUSTED_NOTICE,
     onToolCall: callbacks.onToolCall,
     onStep: callbacks.onReasoningStep,
     onReasoning: callbacks.onReasoning,
