@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { quoteDate, withLiveBar } from '../../../shared/liveBar'
 import { displaySymbol } from '../../../shared/symbols'
 import type { Bar, Quote, WatchlistEntry } from '../../../shared/types'
 import { changeClass, fmtChange, fmtCompact, fmtPrice, fmtSignedPercent } from '../format'
@@ -35,7 +36,10 @@ function TickerCard({
   onNudge: (direction: 'left' | 'right' | 'up' | 'down') => void
 }) {
   const [bars, setBars] = useState<Bar[]>([])
+  const tradingDay = quoteDate(quote)
 
+  // Fetched again when the quote moves to a new trading day, so a window left
+  // open overnight picks up the bar for the day that just closed.
   useEffect(() => {
     let cancelled = false
     window.stox
@@ -45,7 +49,9 @@ function TickerCard({
     return () => {
       cancelled = true
     }
-  }, [entry.code])
+  }, [entry.code, tradingDay])
+  // Between fetches, the live quote moves the end point on every refresh.
+  const liveBars = useMemo(() => withLiveBar(bars, quote, '1M'), [bars, quote])
 
   return (
     <div
@@ -102,7 +108,7 @@ function TickerCard({
             </div>
           </div>
           <div title="Last month">
-            <Sparkline bars={bars} />
+            <Sparkline bars={liveBars} />
           </div>
         </div>
       ) : (

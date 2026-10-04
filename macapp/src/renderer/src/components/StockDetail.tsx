@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { quoteDate, withLiveBar } from '../../../shared/liveBar'
 import { displaySymbol } from '../../../shared/symbols'
 import type { Bar, Fundamentals, HistoryRange, Quote, WatchlistEntry } from '../../../shared/types'
 import {
@@ -16,33 +17,6 @@ import { PriceChart } from './PriceChart'
 const RANGES: HistoryRange[] = ['1M', '3M', '6M', '1Y', '5Y']
 
 type Row = [label: string, value: string]
-
-/** EODHD's end-of-day history has no bar for today until after the close, so
- * the live quote is drawn in as the latest bar -- that's what lets Refresh (and
- * the minute timer) move the chart. On the weekly 5Y chart it extends the
- * current week's bar instead of adding a point. */
-function withLiveBar(bars: Bar[], quote: Quote | undefined, range: HistoryRange): Bar[] {
-  if (!quote?.timestamp || bars.length === 0) return bars
-  // UTC date: trading hours fall within one UTC day for the markets we quote.
-  const date = new Date(quote.timestamp * 1000).toISOString().slice(0, 10)
-  const last = bars[bars.length - 1]
-  if (date < last.date) return bars
-
-  const today: Bar = {
-    date,
-    open: quote.open,
-    high: quote.high,
-    low: quote.low,
-    close: quote.price,
-    volume: quote.volume
-  }
-  if (date === last.date) return [...bars.slice(0, -1), today]
-  if (range === '5Y' && Date.parse(date) - Date.parse(last.date) < 7 * 86_400_000) {
-    const week = { ...last, close: quote.price, high: Math.max(last.high, quote.high), low: Math.min(last.low, quote.low) }
-    return [...bars.slice(0, -1), week]
-  }
-  return [...bars, today]
-}
 
 /** Rows Yahoo has no data for are dropped, and a section with none left is
  * skipped -- a crypto pair or ETF would otherwise be a wall of dashes. */
@@ -215,18 +189,29 @@ export function StockDetail({
     }
   }, [entry.code])
 
+  const tradingDay = quoteDate(quote)
+
   useEffect(() => {
-    let cancelled = false
     setBars(null)
     setHistoryError(null)
+  }, [entry.code, range])
+
+  // Also fetched again when the quote moves to a new trading day (see
+  // TickerCard); the chart keeps its bars until the new ones land.
+  useEffect(() => {
+    let cancelled = false
     window.stox
       .history(entry.code, range)
-      .then((b) => !cancelled && setBars(b))
+      .then((b) => {
+        if (cancelled) return
+        setBars(b)
+        setHistoryError(null)
+      })
       .catch((e: Error) => !cancelled && setHistoryError(e.message))
     return () => {
       cancelled = true
     }
-  }, [entry.code, range])
+  }, [entry.code, range, tradingDay])
 
   const bars = useMemo(() => historyBars && withLiveBar(historyBars, quote, range), [historyBars, quote, range])
 
