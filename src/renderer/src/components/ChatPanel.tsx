@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ConversationSummary } from '../../../shared/types'
+import { isComposing } from '../keys'
 import type { useBridge } from '../useBridge'
 import { TranscriptRow } from './TranscriptRow'
 
@@ -222,7 +223,7 @@ export function ChatPanel({
           placeholder="Ask a question…"
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
+            if (e.key === 'Enter' && !e.shiftKey && !isComposing(e)) {
               e.preventDefault()
               submit()
             }

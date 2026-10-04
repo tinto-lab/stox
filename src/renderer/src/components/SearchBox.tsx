@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useState } from 'react'
 import { displaySymbol, normalize } from '../../../shared/symbols'
 import type { SymbolMatch, WatchlistEntry } from '../../../shared/types'
+import { isComposing } from '../keys'
 
 /** Ticker/company lookup. Typing searches EODHD's symbol index (debounced);
  * Enter opens the highlighted match, or the typed text as a ticker when
@@ -74,6 +75,7 @@ export const SearchBox = forwardRef<HTMLInputElement, { onOpen: (entry: Watchlis
           onFocus={() => setOpen(true)}
           onBlur={() => setTimeout(() => setOpen(false), 120)}
           onKeyDown={(e) => {
+            if (isComposing(e)) return
             if (e.key === 'ArrowDown') {
               e.preventDefault()
               setHighlight((h) => Math.min(h + 1, matches.length - 1))
