@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
-import { quoteDate, withLiveBar } from '../../../shared/liveBar'
+import { periodChange, quoteDate, withLiveBar } from '../../../shared/liveBar'
 import { displaySymbol } from '../../../shared/symbols'
 import type { Bar, Fundamentals, HistoryRange, Quote, WatchlistEntry } from '../../../shared/types'
 import {
   changeClass,
+  changeTooltip,
   fmtChange,
   fmtCompact,
   fmtNumber,
   fmtPercent,
   fmtPrice,
   fmtSignedPercent,
-  fmtTime
+  fmtTime,
+  sessionLabel
 } from '../format'
 import { PriceChart } from './PriceChart'
 
@@ -216,7 +218,7 @@ export function StockDetail({
   const bars = useMemo(() => historyBars && withLiveBar(historyBars, quote, range), [historyBars, quote, range])
 
   const name = fundamentals?.name || entry.name
-  const periodChange = bars && bars.length > 1 ? (bars[bars.length - 1].close / bars[0].close - 1) * 100 : null
+  const rangeChange = bars && periodChange(bars)
 
   return (
     <div className="detail">
@@ -246,8 +248,9 @@ export function StockDetail({
         {quote ? (
           <>
             <span className="detail-price">{fmtPrice(quote.price)}</span>
-            <span className={`detail-change ${changeClass(quote.change)}`}>
-              {fmtChange(quote.change, quote.price)} ({fmtSignedPercent(quote.percent)}) today
+            <span className={`detail-change ${changeClass(quote.change)}`} title={changeTooltip(quote)}>
+              {fmtChange(quote.change, quote.price)} ({fmtSignedPercent(quote.percent)}){' '}
+              {sessionLabel(quote.timestamp)}
             </span>
             {quote.timestamp && <span className="dim">as of {fmtTime(quote.timestamp)}</span>}
           </>
@@ -271,9 +274,9 @@ export function StockDetail({
               </button>
             ))}
           </div>
-          {periodChange !== null && (
-            <span className={changeClass(periodChange)}>
-              {fmtSignedPercent(periodChange)} <span className="dim">over {range}</span>
+          {rangeChange !== null && (
+            <span className={changeClass(rangeChange)}>
+              {fmtSignedPercent(rangeChange)} <span className="dim">over {range}</span>
             </span>
           )}
         </div>

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { quoteDate, withLiveBar } from '../../../shared/liveBar'
+import { periodChange, quoteDate, withLiveBar } from '../../../shared/liveBar'
 import { displaySymbol } from '../../../shared/symbols'
 import type { Bar, Quote, WatchlistEntry } from '../../../shared/types'
-import { changeClass, fmtChange, fmtCompact, fmtPrice, fmtSignedPercent } from '../format'
+import { changeClass, changeTooltip, fmtChange, fmtCompact, fmtPrice, fmtSignedPercent, sessionLabel } from '../format'
 import { Sparkline } from './Sparkline'
 
 const NUDGE_KEYS: Record<string, 'left' | 'right' | 'up' | 'down'> = {
@@ -55,6 +55,7 @@ function TickerCard({
   }, [entry.code, tradingDay])
   // Between fetches, the live quote moves the end point on every refresh.
   const liveBars = useMemo(() => withLiveBar(bars, quote, '1M'), [bars, quote])
+  const monthChange = periodChange(liveBars)
 
   return (
     <div
@@ -106,12 +107,18 @@ function TickerCard({
         <div className="ticker-card-body">
           <div>
             <div className="ticker-price">{fmtPrice(quote.price)}</div>
-            <div className={`ticker-change ${changeClass(quote.change)}`}>
-              {fmtChange(quote.change, quote.price)} ({fmtSignedPercent(quote.percent)})
+            <div className={`ticker-change ${changeClass(quote.change)}`} title={changeTooltip(quote)}>
+              {fmtChange(quote.change, quote.price)} ({fmtSignedPercent(quote.percent)}){' '}
+              <span className="dim">{sessionLabel(quote.timestamp)}</span>
             </div>
           </div>
           <div className={`sparkline-wrap${refreshing ? ' refreshing' : ''}`} title="Last month" aria-busy={refreshing}>
             <Sparkline bars={liveBars} />
+            {monthChange !== null && (
+              <div className={`sparkline-caption ${changeClass(monthChange)}`}>
+                <span className="dim">1M</span> {fmtSignedPercent(monthChange)}
+              </div>
+            )}
           </div>
         </div>
       ) : (

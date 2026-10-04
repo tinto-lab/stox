@@ -32,3 +32,9 @@ export function withLiveBar(bars: Bar[], quote: Quote | undefined, range: Histor
   }
   return [...bars, today]
 }
+
+/** The percent move from the first bar's close to the last's, or null with
+ * fewer than two bars. */
+export function periodChange(bars: Bar[]): number | null {
+  return bars.length > 1 ? (bars[bars.length - 1].close / bars[0].close - 1) * 100 : null
+}

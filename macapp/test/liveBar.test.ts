@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { quoteDate, withLiveBar } from '../src/shared/liveBar'
+import { periodChange, quoteDate, withLiveBar } from '../src/shared/liveBar'
 import type { Bar, Quote } from '../src/shared/types'
 
 const bar = (date: string, close: number): Bar => ({ date, open: close, high: close + 1, low: close - 1, close, volume: 100 })
@@ -52,5 +52,12 @@ describe('quoteDate', () => {
     expect(quoteDate(quoteAt('2026-10-05', 1))).toBe('2026-10-05')
     expect(quoteDate(quoteAt('2026-10-05', 1, { timestamp: null }))).toBeNull()
     expect(quoteDate(undefined)).toBeNull()
+  })
+})
+
+describe('periodChange', () => {
+  it('is the percent move from the first close to the last', () => {
+    expect(periodChange([bar('2026-09-01', 200), bar('2026-10-01', 190)])).toBeCloseTo(-5)
+    expect(periodChange([bar('2026-10-01', 190)])).toBeNull()
   })
 })

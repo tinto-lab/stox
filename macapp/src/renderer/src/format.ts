@@ -1,3 +1,5 @@
+import type { Quote } from '../../shared/types'
+
 const DASH = '—'
 
 export function fmtNumber(value: number | null | undefined, digits = 2): string {
@@ -46,6 +48,25 @@ export function fmtTime(unixSeconds: number | null): string {
     hour: 'numeric',
     minute: '2-digit'
   })
+}
+
+/** Which session a quote's change covers: "today" while it's from today,
+ * else that day ("Fri", or "Sep 26" once it's a week old) -- on a weekend
+ * the change is Friday's move, and shouldn't read as live. */
+export function sessionLabel(unixSeconds: number | null, now = new Date()): string {
+  if (unixSeconds === null) return '1D'
+  const traded = new Date(unixSeconds * 1000)
+  const startOf = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  const daysAgo = Math.round((startOf(now) - startOf(traded)) / 86_400_000)
+  if (daysAgo <= 0) return 'today'
+  if (daysAgo < 7) return traded.toLocaleDateString('en-US', { weekday: 'short' })
+  return traded.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+/** Hover text for a quote's change: what it's measured against, and when. */
+export function changeTooltip(quote: Quote): string {
+  const basis = `vs. previous close ${fmtPrice(quote.prevClose)}`
+  return quote.timestamp ? `${basis} · last trade ${fmtTime(quote.timestamp)}` : basis
 }
 
 export function changeClass(value: number): string {
