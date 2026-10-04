@@ -4,7 +4,7 @@ import { normalize } from '../shared/symbols'
 import { askAgent, recordAnalysis } from './agent'
 import { runStockAnalysis } from './analysis'
 import { addConsideration, loadConsiderations, removeConsideration } from './considerations'
-import { Conversation, listConversations } from './conversations'
+import { Conversation, type Titler, listConversations, modelTitler } from './conversations'
 import {
   buildLLM,
   currentProviderName,
@@ -32,7 +32,15 @@ export class ChatSession {
   private queue: Promise<void> = Promise.resolve()
   private abort = new AbortController()
 
-  constructor(private readonly emit: (event: BridgeEvent) => void) {}
+  private readonly titler: Titler
+
+  /** `titler` names each new conversation; tests pass a stand-in for the model. */
+  constructor(
+    private readonly emit: (event: BridgeEvent) => void,
+    options: { titler?: Titler } = {}
+  ) {
+    this.titler = options.titler ?? modelTitler
+  }
 
   handle(command: BridgeCommand): void {
     // Captured now, not when the command starts: one still queued at a
@@ -95,12 +103,12 @@ export class ChatSession {
         })
         if (signal.aborted) return
         result(data)
-        try {
-          conversation.recordAsk(command.text, data)
-        } catch (e) {
+        // Not awaited: naming a new conversation takes a model call, and the
+        // next question needn't wait for it.
+        conversation.recordAsk(command.text, data, this.titler).catch((e) => {
           // The answer stands; it just won't be there to resume.
           this.emit({ id: null, type: 'error', message: `couldn't save the conversation: ${errorMessage(e)}` })
-        }
+        })
         return
       }
       case 'analyze': {

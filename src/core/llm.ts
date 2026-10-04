@@ -122,8 +122,9 @@ export function setThinking(enabled: boolean): void {
   writeUserEnv({ STOX_LLM_THINKING: value })
 }
 
-/** A ChatModel for the configured provider; throws AgentError if it can't be used. */
-export function buildLLM(): ChatModel {
+/** A ChatModel for the configured provider; throws AgentError if it can't be used.
+ * `thinking` overrides STOX_LLM_THINKING, e.g. off for a quick side task. */
+export function buildLLM(options: { thinking?: boolean } = {}): ChatModel {
   const provider = currentProviderName()
   const cfg = LLM_PROVIDERS[provider]
   if (!cfg) {
@@ -136,7 +137,7 @@ export function buildLLM(): ChatModel {
   return cfg.build(
     process.env.STOX_LLM_MODEL || cfg.defaultModel,
     apiKey,
-    cfg.thinkingToggle ? thinkingSetting() : undefined
+    cfg.thinkingToggle ? (options.thinking ?? thinkingSetting()) : undefined
   )
 }
 

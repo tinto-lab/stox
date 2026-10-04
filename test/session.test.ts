@@ -22,7 +22,7 @@ const { FakeLLM, RoutedLLM, call, calls, say } = await import('./helpers')
 
 function session() {
   const events: BridgeEvent[] = []
-  const chat = new ChatSession((e) => events.push(e))
+  const chat = new ChatSession((e) => events.push(e), { titler: async () => 'A title' })
   const settle = () => new Promise((r) => setTimeout(r, 20))
   return { chat, events, settle }
 }
@@ -82,7 +82,7 @@ describe('ChatSession', () => {
     first.chat.handle({ id: '3', cmd: 'conversations_list' })
     await first.settle()
     const listed = first.events.find((e) => e.id === '3') as { data: { conversations: { id: string }[] } }
-    expect(listed.data.conversations).toMatchObject([{ title: 'first', turnCount: 2 }])
+    expect(listed.data.conversations).toMatchObject([{ title: 'A title', turnCount: 2 }])
 
     const llm = new FakeLLM([say('three')])
     llmHolder.current = llm

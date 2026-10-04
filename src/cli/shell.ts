@@ -6,7 +6,7 @@ import { askAgent, recordAnalysis } from '../core/agent'
 import { runStockAnalysis } from '../core/analysis'
 import { configDir } from '../core/config'
 import { considerationsPath, loadConsiderations } from '../core/considerations'
-import { Conversation, conversationsDir, listConversations } from '../core/conversations'
+import { Conversation, type Titler, conversationsDir, listConversations, modelTitler } from '../core/conversations'
 import {
   buildLLM,
   currentProviderName,
@@ -143,6 +143,19 @@ export class Shell {
   private conversation = new Conversation()
   // The question or analysis in flight, so ctrl+c can cancel it.
   private running: AbortController | null = null
+  // Saves still being written (a new conversation's first waits on its title).
+  private saving: Promise<unknown> = Promise.resolve()
+  private readonly titler: Titler
+
+  /** `titler` names each new conversation; tests pass a stand-in for the model. */
+  constructor(options: { titler?: Titler } = {}) {
+    this.titler = options.titler ?? modelTitler
+  }
+
+  /** Waits for saves still in progress, e.g. before exiting. */
+  async flush(): Promise<void> {
+    await this.saving
+  }
 
   async handleLine(line: string): Promise<boolean> {
     if (line.startsWith('/')) return this.handleCommand(line)
@@ -172,7 +185,7 @@ export class Shell {
         print(dim('starting a new conversation -- the last one is saved, see /resume.'))
         break
       case '/resume':
-        this.handleResume(rest[0])
+        await this.handleResume(rest[0])
         break
       case '/considerations':
       case '/remembered':
@@ -213,7 +226,8 @@ export class Shell {
   }
 
   /** No argument: lists the saved conversations; a number: resumes that one. */
-  private handleResume(arg?: string): void {
+  private async handleResume(arg?: string): Promise<void> {
+    await this.flush() // so the list includes the conversation just had
     const saved = listConversations(RESUME_LIST_SIZE)
     if (!arg) {
       if (!saved.length) {
@@ -321,11 +335,11 @@ export class Shell {
     const data = showResultData(result)
     if (data) print(data)
     if (result.analysis) print(showAnalysis(result.analysis))
-    try {
-      conversation.recordAsk(text, result)
-    } catch (e) {
+    // Not awaited: the prompt comes back while a new conversation is named.
+    const saved = conversation.recordAsk(text, result, this.titler).catch((e) => {
       fail(`couldn't save the conversation: ${errorMessage(e)}`)
-    }
+    })
+    this.saving = Promise.all([this.saving, saved])
   }
 
   private async handleAnalyze(ticker: string): Promise<void> {
@@ -437,4 +451,5 @@ export async function runRepl(options: { continueLatest?: boolean } = {}): Promi
   }
   rl.close()
   saveLineHistory(lineHistory)
+  await shell.flush()
 }

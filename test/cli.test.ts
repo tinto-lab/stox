@@ -157,7 +157,7 @@ describe('shell commands', () => {
     const conv = new Conversation()
     for (const [q, a] of [['apple?', 'AAPL is 227.'], ['its news?', 'Nothing new.']]) {
       conv.history.push({ role: 'user', text: q }, { role: 'assistant', text: a, toolCalls: [] })
-      conv.recordAsk(q, { text: a, quotes: [], articles: [], geoArticles: [], bars: [], fundamentals: null, analysis: null })
+      await conv.recordAsk(q, { text: a, quotes: [], articles: [], geoArticles: [], bars: [], fundamentals: null, analysis: null })
     }
     await shell.handleLine('/resume')
     expect(plain(output)).toMatch(/ 1 {2}apple\? {2}· just now · 2 questions/)

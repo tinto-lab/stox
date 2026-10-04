@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { AgentResult, ConversationSummary, SavedTurn } from '../shared/types'
 import { configDir } from './config'
-import type { ChatMessage } from './llm'
+import { type ChatMessage, type ChatModel, buildLLM } from './llm'
 
 /**
  * Saved chat conversations, so one can be picked up again later -- in the
@@ -10,13 +10,38 @@ import type { ChatMessage } from './llm'
  * under ~/.config/stox/conversations/, plain text, safe to delete.
  *
  * Only questions the user asked are saved (with any analysis the agent ran
- * to answer them); a typed /analyze or /price isn't. If the CLI and the app
- * both have the same conversation open, the last one to save wins.
+ * to answer them); a typed /analyze or /price isn't. Each is titled with a
+ * short summary of its first question, written by the model before the
+ * first save. If the CLI and the app both have the same conversation open,
+ * the last one to save wins.
  */
 
 export const MAX_SAVED_CONVERSATIONS = 100
 export const MAX_SAVED_TURNS = 200
 const TITLE_LENGTH = 60
+const TITLE_TIMEOUT_MS = 15_000
+
+const TITLE_SYSTEM =
+  'Write a title for a conversation with a stock research assistant, summarizing the question it opens ' +
+  'with in at most six words -- like "Apple share price" or "Tesla risk outlook". Use the language of ' +
+  'the question. Reply with the title alone: no quotes, no trailing punctuation.'
+
+/** Makes a conversation's title from its first question. */
+export type Titler = (question: string) => Promise<string>
+
+/** A short title summarizing `question`, from the model. Gives up after
+ * TITLE_TIMEOUT_MS, so a slow provider can't hold the save up for long. */
+export async function summarizeTitle(llm: ChatModel, question: string): Promise<string> {
+  const reply = await llm.complete({
+    system: TITLE_SYSTEM,
+    messages: [{ role: 'user', text: question }],
+    signal: AbortSignal.timeout(TITLE_TIMEOUT_MS)
+  })
+  return reply.text
+}
+
+/** Titles with the configured model, thinking off: a title isn't worth the wait. */
+export const modelTitler: Titler = (question) => summarizeTitle(buildLLM({ thinking: false }), question)
 
 interface SavedConversation {
   version: 1
@@ -51,6 +76,31 @@ function newId(): string {
 function makeTitle(text: string): string {
   const flat = text.replace(/\s+/g, ' ').trim()
   return flat.length > TITLE_LENGTH ? `${flat.slice(0, TITLE_LENGTH - 1)}…` : flat
+}
+
+/** The model's title tidied up: first line, no "Title:", quotes or end punctuation. */
+export function cleanTitle(raw: string): string {
+  const line = raw.trim().split('\n')[0] ?? ''
+  return makeTitle(
+    line
+      .replace(/^title\s*:\s*/i, '')
+      .replace(/^["'“”‘’「」*]+|["'“”‘’「」*]+$/g, '')
+      .replace(/[.。!！?？:：]+$/, '')
+  )
+}
+
+/** A title for a conversation opening with `question`: the titler's, or
+ * the question itself, shortened, if there's no titler or it fails. */
+async function titleFor(question: string, titler?: Titler): Promise<string> {
+  if (titler) {
+    try {
+      const title = cleanTitle(await titler(question))
+      if (title) return title
+    } catch {
+      // offline, slow or refusing: the question will do
+    }
+  }
+  return makeTitle(question)
 }
 
 /** Drops the turns a typed /analyze added (recordAnalysis): they stay in
@@ -143,6 +193,9 @@ export class Conversation {
   private title: string
   private readonly createdAt: string
   private updatedAt: string
+  // Saves run one after another, so a second answer can't be written
+  // before the first one's title is back.
+  private saving: Promise<void> = Promise.resolve()
 
   constructor(saved?: SavedConversation) {
     const now = new Date().toISOString()
@@ -169,20 +222,29 @@ export class Conversation {
     return { id: this.id, title: this.title, updatedAt: this.updatedAt, turnCount: this.turns.length }
   }
 
-  /** Call after askAgent answered `text` (and appended the turn to `history`). */
-  recordAsk(text: string, result: AgentResult): void {
+  /**
+   * Call after askAgent answered `text` (and appended the turn to
+   * `history`). The turn is recorded at once; the returned promise settles
+   * once it's on disk -- for the first question, after `titler` has named
+   * the conversation. Rejects if the file can't be written.
+   */
+  recordAsk(text: string, result: AgentResult, titler?: Titler): Promise<void> {
     this.updatedAt = new Date().toISOString()
-    this.title ||= makeTitle(text)
     this.turns.push({ text, result, at: this.updatedAt })
     if (this.turns.length > MAX_SAVED_TURNS) this.turns.splice(0, this.turns.length - MAX_SAVED_TURNS)
-    writeSaved({
-      version: 1,
-      id: this.id,
-      title: this.title,
-      createdAt: this.createdAt,
-      updatedAt: this.updatedAt,
-      history: withoutTypedAnalyses(this.history),
-      turns: this.turns
-    })
+    const save = async (): Promise<void> => {
+      if (!this.title) this.title = await titleFor(this.turns[0].text, titler)
+      writeSaved({
+        version: 1,
+        id: this.id,
+        title: this.title,
+        createdAt: this.createdAt,
+        updatedAt: this.updatedAt,
+        history: withoutTypedAnalyses(this.history),
+        turns: this.turns
+      })
+    }
+    this.saving = this.saving.then(save, save)
+    return this.saving
   }
 }
