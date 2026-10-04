@@ -173,7 +173,7 @@ describe('OpenAI-compatible adapter', () => {
             content: null,
             tool_calls: [
               { id: 'c1', type: 'function', function: { name: 'get_stock_quote', arguments: '{"tickers":["TSLA"]}' } },
-              { id: 'c2', type: 'function', function: { name: 'list_news_monitors', arguments: '{oops' } }
+              { id: 'c2', type: 'function', function: { name: 'get_stock_news', arguments: '{oops' } }
             ]
           }
         }
@@ -191,7 +191,7 @@ describe('OpenAI-compatible adapter', () => {
       text: '',
       toolCalls: [
         { id: 'c1', name: 'get_stock_quote', args: { tickers: ['TSLA'] } },
-        { id: 'c2', name: 'list_news_monitors', args: {} }
+        { id: 'c2', name: 'get_stock_news', args: {} }
       ]
     })
     const params = create.mock.calls[0][0]

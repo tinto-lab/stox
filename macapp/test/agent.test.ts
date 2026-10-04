@@ -4,7 +4,6 @@ import { AGENT_SYSTEM, MAX_HISTORY_TURNS, askAgent, recordAnalysis, trimHistory 
 import { formatAnalysisForAgent } from '../src/core/analysis'
 import { addConsideration, loadConsiderations } from '../src/core/considerations'
 import type { ChatMessage, ToolCall } from '../src/core/llm'
-import { loadMonitors } from '../src/core/monitors'
 import { UNKNOWN_ARTICLE_URL_ERROR } from '../src/core/tools'
 import type { AnalysisResult } from '../src/shared/types'
 import { FakeLLM, RoutedLLM, article, bar, call, calls, fundamentals, geoArticle, quote, say } from './helpers'
@@ -60,10 +59,7 @@ describe('askAgent', () => {
       'get_company_fundamentals',
       'analyze_stock',
       'read_article',
-      'remember_consideration',
-      'create_news_monitor',
-      'list_news_monitors',
-      'delete_news_monitor'
+      'remember_consideration'
     ])
   })
 
@@ -171,29 +167,6 @@ describe('askAgent', () => {
     await askAgent(llm, 'next')
     expect(llm.requests[2].system).toContain('Standing considerations')
     expect(llm.requests[2].system).toContain('- insider selling\n- tariffs')
-  })
-
-  it('creates, lists and deletes news monitors', async () => {
-    const create = call('create_news_monitor', { goal: 'oil up', queries: ['Iran', 'OPEC output'], tickers: ['uso'] })
-    const bad = call('create_news_monitor', { goal: 'x', queries: [], tickers: [] })
-    const llm = new FakeLLM([calls(create, bad), say('Watching.')])
-    await askAgent(llm, 'alert me when oil may rise')
-    const [monitor] = loadMonitors()
-    expect(monitor).toMatchObject({ goal: 'oil up', queries: ['Iran', 'OPEC output'], tickers: ['USO'] })
-    expect(resultFor(llm, create)).toBe(
-      `created monitor ${monitor.id}: goal="oil up" queries=["Iran","OPEC output"] tickers=["USO"]`
-    )
-    expect(resultFor(llm, bad)).toBe('error: a monitor needs at least one search query')
-
-    const list = call('list_news_monitors')
-    const del = call('delete_news_monitor', { monitor_id: monitor.id })
-    const delAgain = call('delete_news_monitor', { monitor_id: monitor.id })
-    const llm2 = new FakeLLM([calls(list), calls(del), calls(delAgain), say('Done.')])
-    await askAgent(llm2, 'stop watching oil')
-    expect(resultFor(llm2, list)).toContain(`${monitor.id}: goal="oil up"`)
-    expect(resultFor(llm2, del)).toBe(`deleted monitor ${monitor.id}`)
-    expect(resultFor(llm2, delAgain)).toMatch(/^error: no monitor with id/)
-    expect(loadMonitors()).toEqual([])
   })
 
   it('reports an unknown tool to the model instead of crashing', async () => {

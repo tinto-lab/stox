@@ -4,7 +4,7 @@ import path from 'node:path'
 
 /**
  * Where all of stox's user state lives (~/.config/stox/): the .env file the
- * Settings panel edits, considerations, monitors, the watchlist, ...
+ * Settings panel edits, considerations, the watchlist, ...
  *
  * A function, not a constant, so it follows HOME -- tests point HOME at a
  * throwaway directory instead of touching the real one.
@@ -91,20 +91,4 @@ export function writeUserEnv(values: Record<string, string>): void {
     .filter(([, value]) => value !== undefined && value !== '')
     .map(([key, value]) => `${key}=${value}`)
   fs.writeFileSync(file, lines.join('\n') + '\n')
-}
-
-/** Whole-file JSON write via write-then-rename, so a reader never sees half a file. */
-export function writeJsonAtomic(file: string, data: unknown): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  const tmp = `${file}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n')
-  fs.renameSync(tmp, file)
-}
-
-export function readJson(file: string): unknown {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'))
-  } catch {
-    return undefined
-  }
 }

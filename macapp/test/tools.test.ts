@@ -99,7 +99,7 @@ describe('news tools', () => {
     data.fetchGeoNews.mockResolvedValue([geoArticle('Chips', 'https://r.com/1'), geoArticle('Oil', `${ARTICLE_URL}x`)])
     data.fetchArticleText.mockResolvedValue('Body.')
     const [text] = await runGeoNewsTool('Taiwan chips', 3)
-    expect(data.fetchGeoNews).toHaveBeenCalledWith('Taiwan chips', { limit: 3 })
+    expect(data.fetchGeoNews).toHaveBeenCalledWith('Taiwan chips', 3)
     expect(data.fetchArticleText).toHaveBeenCalledTimes(1)
     expect(text).toContain('country: TW\nsentiment: negative\ntitle: Chips\nurl: https://r.com/1\ntext: Body.')
     expect(text).toContain(`url: ${ARTICLE_URL}x\ntext: Some summary.`)

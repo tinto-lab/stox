@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import { ARTICLE_URL, GNewsError, decodeLink, fetchGeoNews, isRedirectLink, parseFeed } from '../src/core/gnews'
-import { NotifyError, MAX_MESSAGE_CHARS, sendWhatsapp, whatsappConfigured } from '../src/core/notify'
 import { extractText, fetchArticleText } from '../src/core/webfetch'
 import { stubFetch } from './helpers'
 
@@ -85,21 +84,19 @@ describe('fetchGeoNews', () => {
       'https://news.google.com/_/': () =>
         new Response(`)]}'\n\n${JSON.stringify([['wrb.fr', 'Fbv4je', JSON.stringify(['x', 'https://reuters.com/one'])]])}`)
     })
-    const articles = await fetchGeoNews('tariffs OR "export controls"', { limit: 5 })
+    const articles = await fetchGeoNews('tariffs OR "export controls"', 5)
     expect(articles.map((a) => a.link)).toEqual(['https://reuters.com/one', `${ARTICLE_URL}two`])
     const q = new URL(fetch.mock.calls[0][0] as string).searchParams
     expect(q.get('q')).toBe('(tariffs OR "export controls") when:7d')
     expect(q.get('ceid')).toBe('US:en')
 
-    expect(await fetchGeoNews('x', { limit: 1, decodeLinks: false })).toHaveLength(1)
+    expect(await fetchGeoNews('x', 1)).toHaveLength(1)
   })
 
-  it('can skip decoding, with a custom lookback, and caches results', async () => {
-    const fetch = stubFetch({ 'https://news.google.com/rss/search': () => new Response(feed) })
-    const first = await fetchGeoNews('oil', { lookback: 'when:1d', decodeLinks: false })
-    expect(first.map((a) => a.link)).toEqual([`${ARTICLE_URL}one`, `${ARTICLE_URL}two`])
-    expect(new URL(fetch.mock.calls[0][0] as string).searchParams.get('q')).toBe('(oil) when:1d')
-    await fetchGeoNews('oil', { lookback: 'when:1d', decodeLinks: false })
+  it('caches results', async () => {
+    const fetch = stubFetch({ 'https://news.google.com/rss/search': () => new Response(rss('')) })
+    await fetchGeoNews('oil')
+    await fetchGeoNews('oil')
     expect(fetch).toHaveBeenCalledTimes(1)
   })
 
@@ -138,43 +135,5 @@ describe('article extraction', () => {
 
   it('returns null for a page with no article', () => {
     expect(extractText('<html><body></body></html>', 'https://example.com')).toBeNull()
-  })
-})
-
-describe('WhatsApp via CallMeBot', () => {
-  const configure = (): void => {
-    process.env.CALLMEBOT_PHONE = '+14155550123'
-    process.env.CALLMEBOT_APIKEY = 'key'
-  }
-
-  it('refuses without settings, making no request', async () => {
-    const fetch = stubFetch({})
-    expect(whatsappConfigured()).toBe(false)
-    await expect(sendWhatsapp('hi')).rejects.toThrow(/isn't set up/)
-    expect(fetch).not.toHaveBeenCalled()
-  })
-
-  it('sends phone, key and truncated text', async () => {
-    configure()
-    const fetch = stubFetch({ 'https://api.callmebot.com/': () => new Response('Message queued') })
-    await sendWhatsapp('x'.repeat(MAX_MESSAGE_CHARS + 50))
-    const q = new URL(fetch.mock.calls[0][0] as string).searchParams
-    expect(q.get('phone')).toBe('+14155550123')
-    expect(q.get('apikey')).toBe('key')
-    expect(q.get('text')).toHaveLength(MAX_MESSAGE_CHARS)
-  })
-
-  it('treats a rejection page, an HTTP error or a network error as failure', async () => {
-    configure()
-    stubFetch({ 'https://api.callmebot.com/': () => new Response('<p>APIKey is invalid</p>') })
-    await expect(sendWhatsapp('hi')).rejects.toThrow(/rejected the message \(HTTP 200\): APIKey is invalid/)
-    stubFetch({ 'https://api.callmebot.com/': () => new Response('', { status: 500 }) })
-    await expect(sendWhatsapp('hi')).rejects.toThrow(NotifyError)
-    stubFetch({
-      'https://api.callmebot.com/': () => {
-        throw new TypeError('offline')
-      }
-    })
-    await expect(sendWhatsapp('hi')).rejects.toThrow(/network error/)
   })
 })

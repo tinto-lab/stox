@@ -29,7 +29,7 @@ const REQUEST_TIMEOUT_MS = 15_000
 const MAX_DECODE_WORKERS = 5
 
 /** Past week. `when:` is Google News's own search operator. */
-const DEFAULT_LOOKBACK = 'when:7d'
+const LOOKBACK = 'when:7d'
 const LOCALE_PARAMS = { hl: 'en-US', gl: 'US', ceid: 'US:en' }
 
 const USER_AGENT = 'Mozilla/5.0 (compatible; stox/1.0; terminal research tool)'
@@ -154,26 +154,15 @@ export async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) =>
   return results
 }
 
-export interface GeoNewsOptions {
-  limit?: number
-  /** A Google News `when:` operator; default past week. */
-  lookback?: string
-  /** false keeps each article's news.google.com redirect instead of resolving
-   * it -- two extra requests per article that a caller only reading
-   * headlines (the news watcher) doesn't need. */
-  decodeLinks?: boolean
-}
-
-/** Recent world-news articles matching a free-text query (not a ticker). */
-export async function fetchGeoNews(query: string, options: GeoNewsOptions = {}): Promise<GeoArticle[]> {
-  const { limit = 5, lookback = DEFAULT_LOOKBACK, decodeLinks = true } = options
-  const key = JSON.stringify([query, limit, lookback, decodeLinks])
+/** Recent world-news articles (past week) matching a free-text query, not a ticker. */
+export async function fetchGeoNews(query: string, limit = 5): Promise<GeoArticle[]> {
+  const key = JSON.stringify([query, limit])
   const cached = cache.get(key)
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.articles
 
   // Parenthesized so an OR in the query doesn't swallow the date window
   // ("a OR b when:7d" would only limit the b side).
-  const params = new URLSearchParams({ q: `(${query}) ${lookback}`, ...LOCALE_PARAMS })
+  const params = new URLSearchParams({ q: `(${query}) ${LOOKBACK}`, ...LOCALE_PARAMS })
   let response: Response
   try {
     response = await fetch(`${RSS_URL}?${params}`, {
@@ -186,7 +175,7 @@ export async function fetchGeoNews(query: string, options: GeoNewsOptions = {}):
   if (!response.ok) throw new GNewsError(`server returned HTTP ${response.status}`)
 
   const articles = parseFeed(await response.text()).slice(0, Math.max(1, limit))
-  if (articles.length && decodeLinks) {
+  if (articles.length) {
     const real = await mapLimit(articles, MAX_DECODE_WORKERS, (a) => decodeLink(a.link))
     articles.forEach((a, i) => {
       if (real[i]) a.link = real[i]

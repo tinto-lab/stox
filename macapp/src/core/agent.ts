@@ -2,7 +2,6 @@ import type { AgentResult, AnalysisResult } from '../shared/types'
 import { ANALYZE_STOCK_SPEC, type AnalysisCallbacks, formatAnalysisForAgent, runStockAnalysis } from './analysis'
 import { addConsideration, loadConsiderations } from './considerations'
 import { type ChatMessage, type ChatModel, type Dispatch, type OnToolCall, type ToolSpec, runToolLoop } from './llm'
-import { addMonitor, loadMonitors, removeMonitor } from './monitors'
 import {
   TOOL_SPECS,
   UNKNOWN_ARTICLE_URL_ERROR,
@@ -32,12 +31,8 @@ export const AGENT_SYSTEM =
   'individual data tools. When the user asks whether to buy or sell, or where a price is headed, answer ' +
   'directly: give a clear Buy, Hold, or Sell call and, if asked for a prediction, a concrete price ' +
   "target or range with a time horizon, grounded in the analysis. Don't refuse or dodge these questions " +
-  "and don't lecture about not giving financial advice -- the app already shows a disclaimer. When the " +
-  'user asks to be alerted or notified about something, or to keep an eye on it, call ' +
-  'create_news_monitor: work out what news would move it and turn that into short news searches (for ' +
-  '"alert me when oil prices may rise": Iran, Strait of Hormuz, OPEC output, Russia oil sanctions, ' +
-  'Middle East peace talks, tanker attacks) plus the tickers it concerns (USO, XOM, FRO), then tell the ' +
-  "user what you'll watch. Answer in one or two short sentences -- a detailed panel of the tool data is " +
+  "and don't lecture about not giving financial advice -- the app already shows a disclaimer. " +
+  "Answer in one or two short sentences -- a detailed panel of the tool data is " +
   "printed right after your answer, so don't restate it."
 
 /** AGENT_SYSTEM plus the standing considerations, read fresh each turn so
@@ -61,35 +56,6 @@ const AGENT_TOOL_SPECS: Record<string, ToolSpec> = {
       'it when the user says something like "always consider X", "keep Y in mind when talking about ' +
       'risk", or "remember this for next time" -- not for one-off facts that aren\'t standing instructions.',
     parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] }
-  },
-  create_news_monitor: {
-    name: 'create_news_monitor',
-    description:
-      'Start watching breaking news for the user and alert them (WhatsApp) when something material ' +
-      'happens. Persists until they delete it.\n\n`goal` is what the user wants to be alerted about, in ' +
-      'their words. `queries` are 3-8 short news searches covering what drives it -- events, places, ' +
-      'organizations, policies -- not the goal restated; every word of a query must match a headline, ' +
-      'so keep each to 1-4 words (use OR for alternatives). `tickers` are the securities the goal is ' +
-      'about or that the news would move (e.g. USO, XOM, FRO for crude oil and tankers).',
-    parameters: {
-      type: 'object',
-      properties: {
-        goal: { type: 'string' },
-        queries: { type: 'array', items: { type: 'string' } },
-        tickers: { type: 'array', items: { type: 'string' } }
-      },
-      required: ['goal', 'queries', 'tickers']
-    }
-  },
-  list_news_monitors: {
-    name: 'list_news_monitors',
-    description: "List the user's news monitors (id, goal, queries, tickers).",
-    parameters: { type: 'object', properties: {} }
-  },
-  delete_news_monitor: {
-    name: 'delete_news_monitor',
-    description: 'Stop and delete one news monitor, by the id list_news_monitors gives.',
-    parameters: { type: 'object', properties: { monitor_id: { type: 'string' } }, required: ['monitor_id'] }
   }
 }
 
@@ -140,10 +106,6 @@ export function articleUrlsIn(messages: ChatMessage[]): Set<string> {
     for (const match of m.content.matchAll(/^url: (\S+)$/gm)) urls.add(match[1])
   }
   return urls
-}
-
-function formatMonitor(m: { id: string; goal: string; queries: string[]; tickers: string[] }): string {
-  return `${m.id}: goal=${JSON.stringify(m.goal)} queries=${JSON.stringify(m.queries)} tickers=${JSON.stringify(m.tickers)}`
 }
 
 export interface AskCallbacks {
@@ -239,23 +201,6 @@ export async function askAgent(
         if (!text) return 'error: nothing to remember'
         addConsideration(text)
         return `remembered: ${text}`
-      }
-      case 'create_news_monitor': {
-        try {
-          return `created monitor ${formatMonitor(
-            addMonitor(argString(args, 'goal'), argStrings(args, 'queries'), argStrings(args, 'tickers'))
-          )}`
-        } catch (e) {
-          return `error: ${(e as Error).message}`
-        }
-      }
-      case 'list_news_monitors': {
-        const monitors = loadMonitors()
-        return monitors.length ? monitors.map(formatMonitor).join('\n') : 'no news monitors'
-      }
-      case 'delete_news_monitor': {
-        const id = argString(args, 'monitor_id')
-        return removeMonitor(id) ? `deleted monitor ${id}` : `error: no monitor with id ${id} -- call list_news_monitors`
       }
       default:
         return 'unknown tool'

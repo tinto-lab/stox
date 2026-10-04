@@ -5,7 +5,6 @@ import type {
   HistoryRange,
   IpcResult,
   MarketStatus,
-  MonitorsState,
   QuoteResult,
   StoxApi,
   SymbolMatch,
@@ -41,14 +40,6 @@ const stoxApi: StoxApi = {
   saveSettings: (values: Record<string, string>) => invoke<void>('settings:save', values),
   getTheme: () => invoke<Theme>('appearance:get'),
   setTheme: (theme: Theme) => invoke<void>('appearance:set', theme),
-  readMonitors: () => invoke<MonitorsState>('monitors:read'),
-  removeMonitor: (id: string) => invoke<void>('monitors:remove', id),
-  sendTestAlert: () => invoke<void>('monitors:testAlert'),
-  onMonitorsChanged(listener: () => void): () => void {
-    const handler = (): void => listener()
-    ipcRenderer.on('monitors:changed', handler)
-    return () => ipcRenderer.removeListener('monitors:changed', handler)
-  }
 }
 
 contextBridge.exposeInMainWorld('stox', stoxApi)

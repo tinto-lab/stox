@@ -24,12 +24,9 @@ macapp/                 the Node/TypeScript project: core, CLI, and the Electron
     agent.ts            the chat agent: natural-language questions via tool use
     analysis.ts         the /analyze multi-agent trend/fundamentals/news/geopolitics pipeline
     considerations.ts   standing factors the agent always weighs, persisted to disk
-    monitors.ts         news monitors ("alert me when ...") and their alert log
-    watcher.ts          the news monitor loop: poll, LLM triage, alert
-    notify.ts           alert delivery -- WhatsApp via CallMeBot
     session.ts          one chat conversation driven by commands -- the app's chat backend
   src/cli/              the terminal REPL (shell.ts) and its rendering (render.ts)
-  src/main/             Electron main process: windows, IPC, the monitor service
+  src/main/             Electron main process: windows, IPC
   src/preload/          the window.stox API exposed to the renderer
   src/renderer/         the React UI
   src/shared/           types and the chat protocol, shared by all of the above
@@ -174,34 +171,6 @@ this one) automatically includes it in the agent's instructions. Run
 `/considerations` (or `/remembered`) to see what's stored; the file is
 plain text, one consideration per line, safe to hand-edit or delete.
 
-### News alerts
-
-Ask the chat to watch something -- "alert me when crude oil or oil
-shipping prices may rise" -- and the agent calls `create_news_monitor`:
-it works out what news would move that (Iran, Strait of Hormuz, OPEC
-output, tanker rates ...) and the tickers involved (USO, XOM, FRO), and
-saves a monitor to `~/.config/stox/monitors.json`. `list_news_monitors`
-and `delete_news_monitor` manage them from chat; the app's **Alerts**
-panel lists them too, with every alert raised.
-
-While the app is open and any monitor exists, its main process runs the
-watcher (`src/core/watcher.ts`). Every 10 minutes
-(`STOX_MONITOR_INTERVAL_MIN`) it searches Google News for each monitor's
-queries (past day, headlines only), and sends just the headlines it hasn't
-seen to the LLM in one triage call per monitor. The LLM decides which are
-material developments and which tickers they push up or down, and gets
-recent alerts too so the same story doesn't re-alert unless it escalates.
-A new monitor's first check only records what's already out there, so it
-doesn't alert on old news. Without the app, `./stox monitor` runs the same
-loop in the foreground.
-
-Alerts go to WhatsApp via [CallMeBot](https://www.callmebot.com/blog/free-api-whatsapp-messages/),
-a free personal-use relay: message their bot once to get an API key, then
-set `CALLMEBOT_PHONE` and `CALLMEBOT_APIKEY` in Settings (which also has a
-"send test message" button; `./stox test-alert` does the same). Without
-them, alerts still show in the Alerts panel and in
-`~/.config/stox/alerts.jsonl`.
-
 ### Ticker format
 
 EODHD uses `SYMBOL.EXCHANGE`. A bare symbol defaults to `.US`:
@@ -238,8 +207,8 @@ stock prices and company fundamentals:
 Everything runs in the app's main process on `src/core/`: market data
 (EODHD for quotes, history and symbol search, Yahoo Finance for
 fundamentals), the chat (`ChatSession`, reached from the renderer over IPC
-with the commands and events in `src/shared/bridgeProtocol.ts`), and the
-news watcher. There's no separate backend process.
+with the commands and events in `src/shared/bridgeProtocol.ts`). There's
+no separate backend process.
 
 ### Running it (development)
 
@@ -251,7 +220,7 @@ npm run dev
 
 The dashboard opens empty: search for a stock (⌘K), open it, and pin it.
 Open the research chat with the Chat button or ⌘J. Settings (the EODHD key,
-the chat's LLM provider/model and keys, WhatsApp) are saved to
+the chat's LLM provider/model and keys) are saved to
 `~/.config/stox/.env`, the same file the CLI reads. In development the
 app also reads the repo's own `.env`, as the CLI does.
 
@@ -305,14 +274,13 @@ stox reads, so a developer's own keys or files can't leak in or be written:
 | file                  | covers                                                    |
 |-----------------------|------------------------------------------------------------|
 | `marketData.test.ts`  | ticker normalization, EODHD quote/history/news parsing, Yahoo fundamentals, HTTP/error handling (mocked fetch) |
-| `sources.test.ts`     | Google News parsing, redirect-link decoding and caching, article extraction, CallMeBot (mocked fetch) |
+| `sources.test.ts`     | Google News parsing, redirect-link decoding and caching, article extraction (mocked fetch) |
 | `webfetch.test.ts`    | article fetching: truncation and error handling            |
-| `stores.test.ts`      | `.env` loading and precedence, considerations, monitors/alerts/seen-state files |
+| `stores.test.ts`      | `.env` loading and precedence, considerations |
 | `llm.test.ts`         | provider registry, Anthropic/OpenAI message conversion and parsing, the tool loop's round budget |
 | `tools.test.ts`       | every data tool's result text, full-text fallback, errors  |
-| `agent.test.ts`       | the chat agent with a scripted model: every tool, the read_article allow-list, considerations, monitors, history threading/trimming |
+| `agent.test.ts`       | the chat agent with a scripted model: every tool, the read_article allow-list, considerations, history threading/trimming |
 | `analysis.test.ts`    | the four specialists (concurrency, tool slices, search budget, forced final answer) and the aggregator |
-| `watcher.test.ts`     | the monitor cycle: baseline, dedup, triage parsing, retry after a triage failure, delivery failures |
 | `session.test.ts`     | the app's chat protocol: each command's events, history and `reset`, restart dropping in-flight requests |
 | `cli.test.ts`         | terminal rendering and REPL command handling               |
 
@@ -339,6 +307,4 @@ stox reads, so a developer's own keys or files can't leak in or be written:
 - [x] Package the macOS app into a standalone double-clickable `.app` (`npm run package:mac`)
 - [x] One TypeScript core for the CLI and the app (was a Python backend bundled with PyInstaller)
 - [ ] Custom app icon (currently the default Electron icon)
-- [x] News monitors with WhatsApp alerts (`create_news_monitor`, the app's Alerts panel)
-- [ ] More alert channels (Telegram, email), and monitoring while the app is closed (launchd)
 - [ ] Apple Developer ID + notarization, if the app is ever distributed beyond local personal use

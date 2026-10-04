@@ -2,11 +2,9 @@ import path from 'node:path'
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { loadEnv, parseEnvFile, userEnvPath, writeUserEnv } from '../core/config'
 import { fetchFundamentals, fetchHistory, fetchQuotes, hasEodhdKey, searchSymbols } from '../core/marketData'
-import { sendWhatsapp } from '../core/notify'
 import { ChatSession } from '../core/session'
 import type { BridgeCommand } from '../shared/bridgeProtocol'
 import type { IpcResult, Theme, WatchlistEntry } from '../shared/types'
-import { MonitorService } from './monitors'
 import { applyTheme, getTheme, setTheme } from './preferences'
 import { readWatchlist, writeWatchlist } from './watchlist'
 
@@ -41,12 +39,6 @@ if (!gotSingleInstanceLock) {
 // a window being closed and reopened (e.g. via the Dock icon).
 const chat = new ChatSession((event) => {
   mainWindow?.webContents.send('bridge:event', event)
-})
-
-// The news monitor loop runs from launch (whenever a monitor exists) until
-// quit, window or not.
-const monitorService = new MonitorService(() => {
-  mainWindow?.webContents.send('monitors:changed')
 })
 
 function createWindow(): void {
@@ -113,9 +105,6 @@ handle('settings:save', (values: Record<string, string>) => {
   chat.restart()
 })
 
-handle('monitors:read', () => monitorService.state())
-handle('monitors:remove', (id: string) => monitorService.remove(id))
-handle('monitors:testAlert', () => sendWhatsapp('✅ Stox test alert -- WhatsApp alerts are working.'))
 
 handle('appearance:get', getTheme)
 handle('appearance:set', (theme: Theme) => setTheme(theme))
@@ -125,17 +114,10 @@ app.whenReady().then(() => {
   // flash of the system one.
   applyTheme(getTheme())
   createWindow()
-  monitorService.start()
 })
 
-// The monitor keeps running here on purpose: on macOS the app lives on
-// after its last window closes, and alerts should too.
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
-})
-
-app.on('before-quit', () => {
-  monitorService.stop()
 })
 
 app.on('activate', () => {

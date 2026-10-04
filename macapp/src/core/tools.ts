@@ -213,7 +213,7 @@ export async function runGeoNewsTool(query: string, limit = 5): Promise<[string,
   if (!query.trim()) return ['error: no query given', []]
   let articles: GeoArticle[]
   try {
-    articles = await fetchGeoNews(query, { limit })
+    articles = await fetchGeoNews(query, limit)
   } catch (e) {
     return [errorText(e), []]
   }
