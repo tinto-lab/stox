@@ -5,32 +5,31 @@ prices and recent financial news, with a natural-language research mode
 backed by a swappable LLM provider (DeepSeek, OpenAI, or any OpenAI-compatible API).
 
 There are two frontends on one TypeScript core: the terminal REPL (`./stox`,
-below) and a native macOS app (`macapp/`, see [macOS app](#macos-app)). The
+below) and a native macOS app (see [macOS app](#macos-app)). The
 app is a stock price and fundamentals dashboard, with the REPL's research
 chat available as a side panel.
 
 ## Layout
 
 ```
-stox                    terminal entry point (`./stox`) -- runs macapp/src/cli/ via tsx
-macapp/                 the Node/TypeScript project: core, CLI, and the Electron app
-  src/core/             everything both frontends share -- no Electron, no UI
-    config.ts           ~/.config/stox/ and .env loading
-    marketData.ts       EODHD quotes/history/news/search, Yahoo Finance fundamentals
-    gnews.ts            Google News RSS world/geopolitical news (free, keyless)
-    webfetch.ts         fetches a url and extracts its readable article text
-    llm.ts              LLM provider registry, the OpenAI-compatible adapter, the shared tool loop
-    tools.ts            the data-lookup tools the agents call (quote/news/history/...)
-    agent.ts            the chat agent: natural-language questions via tool use
-    analysis.ts         the /analyze multi-agent trend/fundamentals/news/geopolitics pipeline
-    considerations.ts   standing factors the agent always weighs, persisted to disk
-    session.ts          one chat conversation driven by commands -- the app's chat backend
-  src/cli/              the terminal REPL (shell.ts) and its rendering (render.ts)
-  src/main/             Electron main process: windows, IPC
-  src/preload/          the window.stox API exposed to the renderer
-  src/renderer/         the React UI
-  src/shared/           types and the chat protocol, shared by all of the above
-  test/                 vitest suite (see Testing)
+stox                    terminal entry point (`./stox`) -- runs src/cli/ via tsx
+src/core/               everything both frontends share -- no Electron, no UI
+  config.ts             ~/.config/stox/ and .env loading
+  marketData.ts         EODHD quotes/history/news/search, Yahoo Finance fundamentals
+  gnews.ts              Google News RSS world/geopolitical news (free, keyless)
+  webfetch.ts           fetches a url and extracts its readable article text
+  llm.ts                LLM provider registry, the OpenAI-compatible adapter, the shared tool loop
+  tools.ts              the data-lookup tools the agents call (quote/news/history/...)
+  agent.ts              the chat agent: natural-language questions via tool use
+  analysis.ts           the /analyze multi-agent trend/fundamentals/news/geopolitics pipeline
+  considerations.ts     standing factors the agent always weighs, persisted to disk
+  session.ts            one chat conversation driven by commands -- the app's chat backend
+src/cli/                the terminal REPL (shell.ts) and its rendering (render.ts)
+src/main/               Electron main process: windows, IPC
+src/preload/            the window.stox API exposed to the renderer
+src/renderer/           the React UI
+src/shared/             types and the chat protocol, shared by all of the above
+test/                   vitest suite (see Testing)
 scripts/kill_app.sh     stops any running Stox.app (used by `npm run package:mac`)
 ```
 
@@ -45,7 +44,6 @@ Each core module has one job; the module comments say which.
 ## Setup
 
 ```bash
-cd macapp
 npm install       # one time
 ```
 
@@ -87,13 +85,12 @@ export DEEPSEEK_API_KEY=...           # whichever provider you picked
 
 ### A standalone binary
 
-`./stox` needs Node and `macapp/node_modules`. To get one self-contained
+`./stox` needs Node and `node_modules`. To get one self-contained
 executable instead (about 60 MB, runtime included), build it with
 [Bun](https://bun.sh) (`brew install oven-sh/bun/bun`):
 
 ```bash
-cd macapp
-npm run build:cli        # -> macapp/dist/stox
+npm run build:cli        # -> dist/stox
 cp dist/stox ~/.local/bin/   # or anywhere on your PATH
 ```
 
@@ -209,7 +206,7 @@ The `demo` key works only for: `AAPL.US`, `TSLA.US`, `VTI.US`, `AMZN.US`,
 
 ## macOS app
 
-`macapp/` is a native macOS app (Electron + TypeScript/React) for checking
+Stox is also a native macOS app (Electron + TypeScript/React) for checking
 stock prices and company fundamentals:
 
 - **Dashboard** — the tickers you've pinned, each with its live price, day
@@ -235,7 +232,6 @@ no separate backend process.
 ### Running it (development)
 
 ```bash
-cd macapp
 npm install     # one time
 npm run dev
 ```
@@ -247,18 +243,17 @@ the chat's LLM provider/model and keys) are saved to
 app also reads the repo's own `.env`, as the CLI does.
 
 `npm run typecheck` and `npm run build` (a one-off production build, output
-to `macapp/out/`) are also available.
+to `out/`) are also available.
 
 ### Packaging a standalone `.app`
 
 ```bash
-cd macapp
 npm run relaunch     # kill any running instance, rebuild, sign, open the fresh build
 ```
 
 `npm run relaunch` is the one-command dev loop: it runs `npm run stop`
 (kills any Stox process still running — see below), `electron-vite build`,
-`electron-builder` (producing `macapp/dist/mac-arm64/Stox.app`), an ad-hoc
+`electron-builder` (producing `dist/mac-arm64/Stox.app`), an ad-hoc
 `codesign` (electron-builder's `identity: null` config skips signing
 entirely; ad-hoc signing avoids a repeated Gatekeeper prompt on every local
 launch — a paid Apple Developer ID + notarization would only be needed to
@@ -273,7 +268,7 @@ a process that's already running — so testing against a stale instance
 that predates your rebuild is an easy trap. Two defenses:
 
 - The app itself refuses to run as a second instance
-  (`app.requestSingleInstanceLock()` in `macapp/src/main/index.ts`) — a
+  (`app.requestSingleInstanceLock()` in `src/main/index.ts`) — a
   second `open`/double-click just focuses the already-running window
   instead of starting a confusing duplicate process.
 - `npm run stop` (`scripts/kill_app.sh`) force-kills any running Stox
@@ -283,7 +278,6 @@ that predates your rebuild is an easy trap. Two defenses:
 ## Testing
 
 ```bash
-cd macapp
 npm test             # vitest, everything under test/
 npm run typecheck
 ```

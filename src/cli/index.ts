@@ -6,9 +6,9 @@ import { runRepl } from './shell'
  * stox -- the terminal research console (`./stox` at the repo root).
  */
 
-// Run from source by tsx, so this file sits at macapp/src/cli/: the repo
-// root, and its optional .env, is three levels up.
-loadEnv(path.resolve(__dirname, '..', '..', '..', '.env'))
+// Run from source by tsx, so this file sits at src/cli/: the repo root, and
+// its optional .env, is two levels up.
+loadEnv(path.resolve(__dirname, '..', '..', '.env'))
 
 async function main(command = ''): Promise<void> {
   if (command) {

@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "stop": "../scripts/kill_app.sh",
+    "stop": "scripts/kill_app.sh",
     "package:mac": "npm run stop && electron-vite build && electron-builder --mac && codesign --force --deep --sign - dist/mac-arm64/Stox.app",
     "relaunch": "npm run package:mac && open dist/mac-arm64/Stox.app",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",

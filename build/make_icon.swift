@@ -3,7 +3,7 @@
 // green macOS-style rounded square.
 // electron-builder picks up build/icon.png automatically when packaging.
 //
-// Regenerate with:  swift build/make_icon.swift   (run from macapp/)
+// Regenerate with:  swift build/make_icon.swift   (run from the repo root)
 import AppKit
 
 let size: CGFloat = 1024

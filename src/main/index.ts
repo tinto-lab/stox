@@ -12,8 +12,8 @@ let mainWindow: BrowserWindow | null = null
 
 // API keys and settings live in ~/.config/stox/.env (the Settings panel
 // edits it). A dev checkout's own .env is read too, as the CLI does --
-// __dirname at runtime is macapp/out/main, three levels below the repo root.
-const projectEnvFile = app.isPackaged ? undefined : path.resolve(__dirname, '..', '..', '..', '.env')
+// __dirname at runtime is out/main, two levels below the repo root.
+const projectEnvFile = app.isPackaged ? undefined : path.resolve(__dirname, '..', '..', '.env')
 loadEnv(projectEnvFile)
 
 // Refuse to run as a second instance: double-clicking the Dock icon (or
