@@ -115,6 +115,43 @@ button:disabled {
   cursor: default;
 }
 
+/* An on/off switch: a label with a sliding knob, on a role="switch" button. */
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.toggle-track {
+  position: relative;
+  width: 26px;
+  height: 15px;
+  border-radius: 8px;
+  background: var(--faint);
+  transition: background 0.15s;
+}
+
+.toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 0.15s;
+}
+
+.toggle[aria-checked='true'] .toggle-track {
+  background: var(--accent);
+}
+
+.toggle[aria-checked='true'] .toggle-knob {
+  transform: translateX(11px);
+}
+
 .icon-button {
   width: 26px;
   height: 26px;

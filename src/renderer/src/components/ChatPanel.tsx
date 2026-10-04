@@ -142,12 +142,16 @@ export function ChatPanel({
         <div className="chat-actions">
           {status && status.thinking !== null && (
             <button
-              className={status.thinking ? 'primary' : ''}
+              className="toggle"
+              role="switch"
+              aria-checked={status.thinking}
               onClick={() => setThinking(!status.thinking)}
-              aria-pressed={status.thinking}
               title="Thinking mode: deeper answers, but slower. Applies from the next question."
             >
-              Thinking {status.thinking ? 'on' : 'off'}
+              Thinking
+              <span className="toggle-track" aria-hidden="true">
+                <span className="toggle-knob" />
+              </span>
             </button>
           )}
           <button onClick={reset} title="Start a new conversation">
