@@ -1,0 +1,279 @@
+import type { AgentResult, AnalysisResult } from '../shared/types'
+import { ANALYZE_STOCK_SPEC, type AnalysisCallbacks, formatAnalysisForAgent, runStockAnalysis } from './analysis'
+import { addConsideration, loadConsiderations } from './considerations'
+import { type ChatMessage, type ChatModel, type Dispatch, type OnToolCall, type ToolSpec, runToolLoop } from './llm'
+import { addMonitor, loadMonitors, removeMonitor } from './monitors'
+import {
+  TOOL_SPECS,
+  UNKNOWN_ARTICLE_URL_ERROR,
+  argNumber,
+  argString,
+  argStrings,
+  runFundamentalsTool,
+  runGeoNewsTool,
+  runHistoryTool,
+  runNewsTool,
+  runQuoteTool,
+  runReadArticleTool
+} from './tools'
+
+/**
+ * The chat agent: resolves a plain-English question ("what's apple trading
+ * at?", "any news on tesla?") into tool calls and a short answer. Returns
+ * data, never prints -- the app and the CLI each render the result their
+ * own way.
+ */
+
+export const AGENT_SYSTEM =
+  'You are stox, a terse terminal research assistant for stocks, crypto, and FX. Reply in the ' +
+  "user's language. Map company names in any language or script to tickers yourself (Apple -> AAPL). " +
+  'Fetch only what the question asks for: a bare ticker or company name just wants the price. For ' +
+  'buy/sell/hold, price-prediction, risk, or full-analysis questions, call analyze_stock instead of the ' +
+  'individual data tools. When the user asks whether to buy or sell, or where a price is headed, answer ' +
+  'directly: give a clear Buy, Hold, or Sell call and, if asked for a prediction, a concrete price ' +
+  "target or range with a time horizon, grounded in the analysis. Don't refuse or dodge these questions " +
+  "and don't lecture about not giving financial advice -- the app already shows a disclaimer. When the " +
+  'user asks to be alerted or notified about something, or to keep an eye on it, call ' +
+  'create_news_monitor: work out what news would move it and turn that into short news searches (for ' +
+  '"alert me when oil prices may rise": Iran, Strait of Hormuz, OPEC output, Russia oil sanctions, ' +
+  'Middle East peace talks, tanker attacks) plus the tickers it concerns (USO, XOM, FRO), then tell the ' +
+  "user what you'll watch. Answer in one or two short sentences -- a detailed panel of the tool data is " +
+  "printed right after your answer, so don't restate it."
+
+/** AGENT_SYSTEM plus the standing considerations, read fresh each turn so
+ * one remembered mid-session applies to this session's later turns too. */
+function systemPrompt(): string {
+  const considerations = loadConsiderations()
+  if (!considerations.length) return AGENT_SYSTEM
+  return (
+    `${AGENT_SYSTEM}\n\nStanding considerations the user has asked you to always weigh when explaining ` +
+    'why a price might be moving or assessing risk for a security (these persist across sessions):\n' +
+    considerations.map((c) => `- ${c}`).join('\n')
+  )
+}
+
+const AGENT_TOOL_SPECS: Record<string, ToolSpec> = {
+  remember_consideration: {
+    name: 'remember_consideration',
+    description:
+      'Permanently remember a factor to always weigh when explaining why a price might be moving or ' +
+      'assessing risk for a security.\n\nThis persists across sessions, not just this conversation. Call ' +
+      'it when the user says something like "always consider X", "keep Y in mind when talking about ' +
+      'risk", or "remember this for next time" -- not for one-off facts that aren\'t standing instructions.',
+    parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] }
+  },
+  create_news_monitor: {
+    name: 'create_news_monitor',
+    description:
+      'Start watching breaking news for the user and alert them (WhatsApp) when something material ' +
+      'happens. Persists until they delete it.\n\n`goal` is what the user wants to be alerted about, in ' +
+      'their words. `queries` are 3-8 short news searches covering what drives it -- events, places, ' +
+      'organizations, policies -- not the goal restated; every word of a query must match a headline, ' +
+      'so keep each to 1-4 words (use OR for alternatives). `tickers` are the securities the goal is ' +
+      'about or that the news would move (e.g. USO, XOM, FRO for crude oil and tankers).',
+    parameters: {
+      type: 'object',
+      properties: {
+        goal: { type: 'string' },
+        queries: { type: 'array', items: { type: 'string' } },
+        tickers: { type: 'array', items: { type: 'string' } }
+      },
+      required: ['goal', 'queries', 'tickers']
+    }
+  },
+  list_news_monitors: {
+    name: 'list_news_monitors',
+    description: "List the user's news monitors (id, goal, queries, tickers).",
+    parameters: { type: 'object', properties: {} }
+  },
+  delete_news_monitor: {
+    name: 'delete_news_monitor',
+    description: 'Stop and delete one news monitor, by the id list_news_monitors gives.',
+    parameters: { type: 'object', properties: { monitor_id: { type: 'string' } }, required: ['monitor_id'] }
+  }
+}
+
+const ALL_TOOLS: ToolSpec[] = [
+  TOOL_SPECS.get_stock_quote,
+  TOOL_SPECS.get_stock_news,
+  TOOL_SPECS.get_geopolitical_news,
+  TOOL_SPECS.get_price_history,
+  TOOL_SPECS.get_company_fundamentals,
+  ANALYZE_STOCK_SPEC,
+  TOOL_SPECS.read_article,
+  ...Object.values(AGENT_TOOL_SPECS)
+]
+
+export const MAX_HISTORY_TURNS = 6
+
+/** Drops the oldest whole turns past MAX_HISTORY_TURNS. A turn always
+ * starts at a user message, the only place a cut can't separate a tool
+ * call from its result. */
+export function trimHistory(history: ChatMessage[]): void {
+  const starts = history.flatMap((m, i) => (m.role === 'user' ? [i] : []))
+  if (starts.length > MAX_HISTORY_TURNS) history.splice(0, starts[starts.length - MAX_HISTORY_TURNS])
+}
+
+/**
+ * Appends a /analyze run to `history` as if the agent had called
+ * analyze_stock itself -- user message, the call, its result, a short
+ * answer -- so follow-ups ("why is the risk high?", "read that tariff
+ * article") can build on it.
+ */
+export function recordAnalysis(history: ChatMessage[], ticker: string, result: AnalysisResult): void {
+  const callId = `analyze_${history.length}`
+  history.push(
+    { role: 'user', text: `/analyze ${ticker}` },
+    { role: 'assistant', text: '', toolCalls: [{ id: callId, name: 'analyze_stock', args: { ticker } }] },
+    { role: 'tool', toolCallId: callId, content: formatAnalysisForAgent(result) },
+    { role: 'assistant', text: `Full analysis of ${ticker} is shown above.`, toolCalls: [] }
+  )
+  trimHistory(history)
+}
+
+/** Article urls from earlier tool results ("url: ..." lines), so
+ * read_article's allow-list covers articles surfaced in earlier turns. */
+export function articleUrlsIn(messages: ChatMessage[]): Set<string> {
+  const urls = new Set<string>()
+  for (const m of messages) {
+    if (m.role !== 'tool') continue
+    for (const match of m.content.matchAll(/^url: (\S+)$/gm)) urls.add(match[1])
+  }
+  return urls
+}
+
+function formatMonitor(m: { id: string; goal: string; queries: string[]; tickers: string[] }): string {
+  return `${m.id}: goal=${JSON.stringify(m.goal)} queries=${JSON.stringify(m.queries)} tickers=${JSON.stringify(m.tickers)}`
+}
+
+export interface AskCallbacks {
+  /** Called right before each tool runs. */
+  onToolCall?: OnToolCall
+  /** Progress from the specialists when the model calls analyze_stock. */
+  onAnalysisAgentStart?: AnalysisCallbacks['onAgentStart']
+  onAnalysisToolCall?: AnalysisCallbacks['onToolCall']
+  signal?: AbortSignal
+}
+
+/**
+ * Answers one question. `history` holds earlier turns of the same
+ * conversation (so "what about its news?" resolves "its"); on success this
+ * turn is appended to it and it's trimmed, on failure it's left untouched
+ * so a failed turn doesn't pollute the next one. Throws on an LLM failure.
+ */
+export async function askAgent(
+  llm: ChatModel,
+  query: string,
+  history: ChatMessage[] = [],
+  callbacks: AskCallbacks = {}
+): Promise<AgentResult> {
+  const result: AgentResult = {
+    text: '',
+    quotes: [],
+    articles: [],
+    geoArticles: [],
+    bars: [],
+    fundamentals: null,
+    analysis: null
+  }
+  // Only urls a news tool actually returned (this turn or one still in
+  // history) may be read -- the model can't direct a fetch of any url.
+  const knownUrls = articleUrlsIn(history)
+
+  const dispatch: Dispatch = async (name, args) => {
+    switch (name) {
+      case 'get_stock_quote': {
+        const [text, quotes] = await runQuoteTool(argStrings(args, 'tickers'))
+        if (quotes.length) result.quotes = quotes
+        return text
+      }
+      case 'get_stock_news': {
+        const [text, articles] = await runNewsTool(argStrings(args, 'tickers'), argNumber(args, 'limit', 5))
+        if (articles.length) result.articles = articles
+        for (const a of articles) if (a.link) knownUrls.add(a.link)
+        return text
+      }
+      case 'get_geopolitical_news': {
+        const [text, articles] = await runGeoNewsTool(argString(args, 'query'), argNumber(args, 'limit', 5))
+        if (articles.length) result.geoArticles = articles
+        for (const a of articles) if (a.link) knownUrls.add(a.link)
+        return text
+      }
+      case 'get_price_history': {
+        const [text, bars] = await runHistoryTool(argString(args, 'ticker'), argNumber(args, 'days', 30))
+        if (bars.length) result.bars = bars
+        return text
+      }
+      case 'get_company_fundamentals': {
+        const [text, fundamentals] = await runFundamentalsTool(argString(args, 'ticker'))
+        result.fundamentals = fundamentals ?? result.fundamentals
+        return text
+      }
+      case 'analyze_stock': {
+        let analysis: AnalysisResult
+        try {
+          analysis = await runStockAnalysis(llm, argString(args, 'ticker'), {
+            onAgentStart: callbacks.onAnalysisAgentStart,
+            onToolCall: callbacks.onAnalysisToolCall,
+            signal: callbacks.signal
+          })
+        } catch (e) {
+          callbacks.signal?.throwIfAborted()
+          return `error: analysis error: ${e instanceof Error ? e.message : String(e)}`
+        }
+        result.analysis = analysis
+        if (analysis.quotes.length) result.quotes = analysis.quotes
+        if (analysis.bars.length) result.bars = analysis.bars
+        if (analysis.articles.length) result.articles = analysis.articles
+        if (analysis.geoArticles.length) result.geoArticles = analysis.geoArticles
+        result.fundamentals = analysis.fundamentals ?? result.fundamentals
+        for (const a of [...analysis.articles, ...analysis.geoArticles]) if (a.link) knownUrls.add(a.link)
+        return formatAnalysisForAgent(analysis)
+      }
+      case 'read_article': {
+        const url = argString(args, 'url')
+        return knownUrls.has(url) ? runReadArticleTool(url) : UNKNOWN_ARTICLE_URL_ERROR
+      }
+      case 'remember_consideration': {
+        const text = argString(args, 'text').trim()
+        if (!text) return 'error: nothing to remember'
+        addConsideration(text)
+        return `remembered: ${text}`
+      }
+      case 'create_news_monitor': {
+        try {
+          return `created monitor ${formatMonitor(
+            addMonitor(argString(args, 'goal'), argStrings(args, 'queries'), argStrings(args, 'tickers'))
+          )}`
+        } catch (e) {
+          return `error: ${(e as Error).message}`
+        }
+      }
+      case 'list_news_monitors': {
+        const monitors = loadMonitors()
+        return monitors.length ? monitors.map(formatMonitor).join('\n') : 'no news monitors'
+      }
+      case 'delete_news_monitor': {
+        const id = argString(args, 'monitor_id')
+        return removeMonitor(id) ? `deleted monitor ${id}` : `error: no monitor with id ${id} -- call list_news_monitors`
+      }
+      default:
+        return 'unknown tool'
+    }
+  }
+
+  const messages: ChatMessage[] = [...history, { role: 'user', text: query }]
+  result.text = await runToolLoop({
+    llm,
+    system: systemPrompt(),
+    messages,
+    tools: ALL_TOOLS,
+    dispatch,
+    onToolCall: callbacks.onToolCall,
+    signal: callbacks.signal
+  })
+
+  history.splice(0, history.length, ...messages)
+  trimHistory(history)
+  return result
+}

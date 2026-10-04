@@ -75,7 +75,7 @@ export default function App() {
   const [watchlistError, setWatchlistError] = useState<string | null>(null)
 
   // The chat panel stays mounted (just hidden) once opened, so closing it
-  // doesn't lose the conversation; until then the Python backend never starts.
+  // doesn't lose the conversation; until then the chat is never touched.
   const [chatOpen, setChatOpen] = useState(false)
   const [chatStarted, setChatStarted] = useState(false)
   const [chatWidth, setChatWidth] = useState(loadChatWidth)

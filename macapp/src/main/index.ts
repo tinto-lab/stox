@@ -1,21 +1,22 @@
 import path from 'node:path'
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { loadEnv, parseEnvFile, userEnvPath, writeUserEnv } from '../core/config'
+import { fetchFundamentals, fetchHistory, fetchQuotes, hasEodhdKey, searchSymbols } from '../core/marketData'
+import { sendWhatsapp } from '../core/notify'
+import { ChatSession } from '../core/session'
 import type { BridgeCommand } from '../shared/bridgeProtocol'
 import type { IpcResult, Theme, WatchlistEntry } from '../shared/types'
-import { resolveBackendCommand } from './backendCommand'
-import { BridgeProcess } from './bridgeProcess'
-import { readEnvFile, writeEnvFile } from './envFile'
-import { fetchFundamentals, fetchHistory, fetchQuotes, hasEodhdKey, searchSymbols } from './marketData'
-import { MonitorService, sendTestAlert } from './monitors'
+import { MonitorService } from './monitors'
 import { applyTheme, getTheme, setTheme } from './preferences'
 import { readWatchlist, writeWatchlist } from './watchlist'
 
 let mainWindow: BrowserWindow | null = null
 
-// The Python backend only powers the chat side panel, so it isn't spawned at
-// launch -- BridgeProcess.send() starts it on the first chat command. The
-// dashboard and stock views never touch it (see marketData.ts).
-const bridge = new BridgeProcess(resolveBackendCommand)
+// API keys and settings live in ~/.config/stox/.env (the Settings panel
+// edits it). A dev checkout's own .env is read too, as the CLI does --
+// __dirname at runtime is macapp/out/main, three levels below the repo root.
+const projectEnvFile = app.isPackaged ? undefined : path.resolve(__dirname, '..', '..', '..', '.env')
+loadEnv(projectEnvFile)
 
 // Refuse to run as a second instance: double-clicking the Dock icon (or
 // `open`-ing the app) while it's already running would otherwise start a
@@ -36,18 +37,14 @@ if (!gotSingleInstanceLock) {
   })
 }
 
-// Registered once for the process's lifetime, not per-window: it reads
-// `mainWindow` live, so it doesn't need re-registering when a window is
-// closed and reopened (e.g. via the Dock icon) -- doing that inside
-// createWindow() would stack one extra listener per reopen, multiplying
-// every backend event by however many times the window had been reopened.
-bridge.onEvent((event) => {
+// The chat panel's conversation. It reads `mainWindow` live, so it outlives
+// a window being closed and reopened (e.g. via the Dock icon).
+const chat = new ChatSession((event) => {
   mainWindow?.webContents.send('bridge:event', event)
 })
 
-// The news monitor loop is its own process, separate from the chat's: it
-// runs from launch (whenever a monitor exists) until quit, window or not,
-// and restarting the chat backend doesn't interrupt it.
+// The news monitor loop runs from launch (whenever a monitor exists) until
+// quit, window or not.
 const monitorService = new MonitorService(() => {
   mainWindow?.webContents.send('monitors:changed')
 })
@@ -105,25 +102,20 @@ handle('watchlist:read', readWatchlist)
 handle('watchlist:write', (entries: WatchlistEntry[]) => writeWatchlist(entries))
 
 ipcMain.handle('bridge:send', (_event, command: BridgeCommand) => {
-  bridge.send(command)
+  chat.handle(command)
 })
 
-ipcMain.handle('bridge:restart', () => {
-  bridge.restart()
-})
-
-handle('settings:read', readEnvFile)
+handle('settings:read', () => parseEnvFile(userEnvPath()))
 handle('settings:save', (values: Record<string, string>) => {
-  writeEnvFile(values)
-  // A running backend read its keys at startup; restart it to pick up the new ones.
-  // Market data re-reads the file on every request, so it needs nothing.
-  if (bridge.running) bridge.restart()
-  monitorService.settingsChanged()
+  writeUserEnv(values)
+  loadEnv(projectEnvFile)
+  // The provider or model may have changed under a conversation in flight.
+  chat.restart()
 })
 
 handle('monitors:read', () => monitorService.state())
 handle('monitors:remove', (id: string) => monitorService.remove(id))
-handle('monitors:testAlert', sendTestAlert)
+handle('monitors:testAlert', () => sendWhatsapp('✅ Stox test alert -- WhatsApp alerts are working.'))
 
 handle('appearance:get', getTheme)
 handle('appearance:set', (theme: Theme) => setTheme(theme))
@@ -139,15 +131,10 @@ app.whenReady().then(() => {
 // The monitor keeps running here on purpose: on macOS the app lives on
 // after its last window closes, and alerts should too.
 app.on('window-all-closed', () => {
-  bridge.stop()
   if (process.platform !== 'darwin') app.quit()
 })
 
-// Belt-and-suspenders alongside window-all-closed: guarantees the Python
-// subprocess is killed on every quit path (Cmd+Q, Dock > Quit, ...).
-// BridgeProcess.stop() is a no-op if it's already stopped.
 app.on('before-quit', () => {
-  bridge.stop()
   monitorService.stop()
 })
 

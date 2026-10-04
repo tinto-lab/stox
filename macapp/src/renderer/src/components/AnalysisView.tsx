@@ -1,27 +1,27 @@
-import type { AnalysisResult } from '../protocol'
+import type { AnalysisResult } from '../../../shared/types'
 
 export function AnalysisView({ analysis }: { analysis: AnalysisResult }) {
   return (
     <div className="card analysis-grid">
       <div className="panel">
         <div className="panel-title">Trend</div>
-        <p>{analysis.trend_text}</p>
+        <p>{analysis.trendText}</p>
       </div>
       <div className="panel">
         <div className="panel-title">Fundamentals</div>
-        <p>{analysis.fundamentals_text}</p>
+        <p>{analysis.fundamentalsText}</p>
       </div>
       <div className="panel">
         <div className="panel-title">News</div>
-        <p>{analysis.news_text}</p>
+        <p>{analysis.newsText}</p>
       </div>
       <div className="panel">
         <div className="panel-title">Geopolitics</div>
-        <p>{analysis.geopolitics_text}</p>
+        <p>{analysis.geopoliticsText}</p>
       </div>
       <div className="panel panel-verdict">
         <div className="panel-title">Risk assessment</div>
-        <p>{analysis.verdict_text}</p>
+        <p>{analysis.verdictText}</p>
         <p className="disclaimer">
           A framework for your own decision, not personalized financial advice.
         </p>

@@ -2,20 +2,27 @@
   "name": "stox-app",
   "version": "0.1.0",
   "private": true,
-  "description": "Native macOS app for stox: a stock price and company fundamentals dashboard, with an optional research chat panel backed by the stox Python backend.",
+  "description": "Stox: a stock price and fundamentals dashboard (macOS app) with a research chat panel, plus the stox terminal CLI. Both run on the TypeScript core in src/core/.",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "build:backend": "../scripts/build_backend.sh",
     "stop": "../scripts/kill_app.sh",
-    "package:mac": "npm run stop && npm run build:backend && electron-vite build && electron-builder --mac && codesign --force --deep --sign - dist/mac-arm64/Stox.app",
+    "package:mac": "npm run stop && electron-vite build && electron-builder --mac && codesign --force --deep --sign - dist/mac-arm64/Stox.app",
     "relaunch": "npm run package:mac && open dist/mac-arm64/Stox.app",
-    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json"
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "vitest run",
+    "cli": "tsx src/cli/index.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
+    "@mozilla/readability": "^0.6.0",
+    "fast-xml-parser": "^5.11.2",
+    "linkedom": "^0.18.13",
+    "openai": "^7.27.0",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react-dom": "^19.3.0",
+    "undici": "^8.11.2"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",
@@ -25,23 +32,16 @@
     "electron": "^44.4.5",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
+    "tsx": "^4.23.15",
     "typescript": "~5.9.3",
-    "vite": "^6.3.6"
+    "vite": "^6.3.6",
+    "vitest": "^5.0.3"
   },
   "build": {
     "appId": "com.stox.app",
     "productName": "Stox",
     "files": [
       "out/**/*"
-    ],
-    "extraResources": [
-      {
-        "from": "backend/stox-backend",
-        "to": "backend",
-        "filter": [
-          "**/*"
-        ]
-      }
     ],
     "mac": {
       "category": "public.app-category.finance",

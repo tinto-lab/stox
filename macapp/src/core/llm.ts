@@ -1,0 +1,331 @@
+import Anthropic from '@anthropic-ai/sdk'
+import OpenAI from 'openai'
+
+/**
+ * The LLM layer: a provider registry (STOX_LLM_PROVIDER / STOX_LLM_MODEL ->
+ * a ChatModel), one small provider-neutral message format, and the tool
+ * loop the chat agent and the analysis specialists share.
+ *
+ * Adding a provider means one entry in LLM_PROVIDERS plus, only if it
+ * doesn't speak the OpenAI chat API, an adapter -- the agents never change,
+ * since they only see ChatModel.
+ */
+
+// -- provider-neutral messages --
+
+export interface ToolCall {
+  id: string
+  name: string
+  args: Record<string, unknown>
+}
+
+/** A tool the model may call; `parameters` is a JSON Schema object. */
+export interface ToolSpec {
+  name: string
+  description: string
+  parameters: Record<string, unknown>
+}
+
+export interface AssistantMessage {
+  role: 'assistant'
+  text: string
+  toolCalls: ToolCall[]
+  /** The provider's own content for this turn (e.g. Anthropic's thinking
+   * blocks), echoed back verbatim on the next request to the same provider. */
+  raw?: { provider: string; content: unknown }
+}
+
+export type ChatMessage =
+  | { role: 'user'; text: string }
+  | AssistantMessage
+  | { role: 'tool'; toolCallId: string; content: string }
+
+export interface CompletionRequest {
+  system: string
+  messages: ChatMessage[]
+  tools?: ToolSpec[]
+  /** Keep `tools` declared (history may hold calls to them) but forbid new calls. */
+  forbidToolUse?: boolean
+  signal?: AbortSignal
+}
+
+export interface ChatModel {
+  /** '<provider>/<model>', for display. */
+  readonly name: string
+  complete(request: CompletionRequest): Promise<AssistantMessage>
+}
+
+// -- provider registry --
+
+interface ProviderConfig {
+  defaultModel: string
+  apiKeyEnv: string
+  build(model: string, apiKey: string): ChatModel
+}
+
+export const LLM_PROVIDERS: Record<string, ProviderConfig> = {
+  anthropic: {
+    defaultModel: 'claude-opus-5',
+    apiKeyEnv: 'ANTHROPIC_API_KEY',
+    build: (model, apiKey) => new AnthropicChatModel(model, new Anthropic({ apiKey }))
+  },
+  deepseek: {
+    defaultModel: 'deepseek-chat',
+    apiKeyEnv: 'DEEPSEEK_API_KEY',
+    build: (model, apiKey) =>
+      new OpenAIChatModel('deepseek', model, new OpenAI({ apiKey, baseURL: 'https://api.deepseek.com' }))
+  },
+  openai: {
+    defaultModel: 'gpt-4o-mini',
+    apiKeyEnv: 'OPENAI_API_KEY',
+    build: (model, apiKey) => new OpenAIChatModel('openai', model, new OpenAI({ apiKey }))
+  }
+}
+
+/** Raised when the configured provider can't be used. */
+export class AgentError extends Error {}
+
+export function currentProviderName(): string {
+  return (process.env.STOX_LLM_PROVIDER || 'anthropic').toLowerCase()
+}
+
+/** '<provider>/<model>' for whatever's configured -- safe to show even if
+ * the provider is unknown or its key is missing. */
+export function describeCurrent(): string {
+  const provider = currentProviderName()
+  const cfg = LLM_PROVIDERS[provider]
+  if (!cfg) return provider
+  return `${provider}/${process.env.STOX_LLM_MODEL || cfg.defaultModel}`
+}
+
+export function providerKeyPresent(): boolean {
+  const cfg = LLM_PROVIDERS[currentProviderName()]
+  return Boolean(cfg && process.env[cfg.apiKeyEnv])
+}
+
+/** A ChatModel for the configured provider; throws AgentError if it can't be used. */
+export function buildLLM(): ChatModel {
+  const provider = currentProviderName()
+  const cfg = LLM_PROVIDERS[provider]
+  if (!cfg) {
+    throw new AgentError(
+      `unknown STOX_LLM_PROVIDER '${provider}' -- choose from: ${Object.keys(LLM_PROVIDERS).join(', ')}`
+    )
+  }
+  const apiKey = process.env[cfg.apiKeyEnv]
+  if (!apiKey) throw new AgentError(`no ${cfg.apiKeyEnv} set for provider '${provider}' -- see /help`)
+  return cfg.build(process.env.STOX_LLM_MODEL || cfg.defaultModel, apiKey)
+}
+
+// -- Anthropic --
+
+// Models that take the server-side refusal fallback: if a safety classifier
+// declines a request, the API re-runs it on a fallback model inside the same
+// call instead of returning a bare refusal.
+const FALLBACK_MODELS = new Set(['claude-fable-5-1', 'claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5'])
+
+export class AnthropicChatModel implements ChatModel {
+  readonly name: string
+
+  constructor(
+    private readonly model: string,
+    private readonly client: Anthropic
+  ) {
+    this.name = `anthropic/${model}`
+  }
+
+  async complete({ system, messages, tools, forbidToolUse, signal }: CompletionRequest): Promise<AssistantMessage> {
+    const fallback = FALLBACK_MODELS.has(this.model)
+    const response = await this.client.beta.messages.create(
+      {
+        model: this.model,
+        max_tokens: 16000,
+        system,
+        messages: toAnthropicMessages(messages),
+        ...(tools?.length
+          ? {
+              tools: tools.map((t) => ({
+                name: t.name,
+                description: t.description,
+                input_schema: t.parameters as Anthropic.Beta.BetaTool.InputSchema
+              })),
+              ...(forbidToolUse ? { tool_choice: { type: 'none' as const } } : {})
+            }
+          : {}),
+        ...(fallback ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const } : {})
+      },
+      { signal }
+    )
+    if (response.stop_reason === 'refusal') {
+      const category = response.stop_details?.category
+      throw new Error(`the model declined to answer${category ? ` (${category})` : ''}`)
+    }
+
+    const text: string[] = []
+    const toolCalls: ToolCall[] = []
+    for (const block of response.content) {
+      if (block.type === 'text') text.push(block.text)
+      else if (block.type === 'tool_use') {
+        toolCalls.push({ id: block.id, name: block.name, args: asArgs(block.input) })
+      }
+    }
+    return {
+      role: 'assistant',
+      text: text.join(''),
+      toolCalls,
+      raw: { provider: 'anthropic', content: response.content }
+    }
+  }
+}
+
+/** Neutral messages -> Anthropic's. Consecutive tool results (and a user
+ * note after them) share one user message, which is how the API expects a
+ * turn's parallel tool results back. */
+export function toAnthropicMessages(messages: ChatMessage[]): Anthropic.Beta.BetaMessageParam[] {
+  const out: Anthropic.Beta.BetaMessageParam[] = []
+  const userBlocks = (): Anthropic.Beta.BetaContentBlockParam[] => {
+    const last = out[out.length - 1]
+    if (last?.role === 'user' && Array.isArray(last.content)) return last.content
+    const content: Anthropic.Beta.BetaContentBlockParam[] = []
+    out.push({ role: 'user', content })
+    return content
+  }
+
+  for (const m of messages) {
+    if (m.role === 'user') {
+      userBlocks().push({ type: 'text', text: m.text })
+    } else if (m.role === 'tool') {
+      userBlocks().push({ type: 'tool_result', tool_use_id: m.toolCallId, content: m.content })
+    } else if (m.raw?.provider === 'anthropic') {
+      out.push({ role: 'assistant', content: m.raw.content as Anthropic.Beta.BetaContentBlockParam[] })
+    } else {
+      const content: Anthropic.Beta.BetaContentBlockParam[] = []
+      if (m.text) content.push({ type: 'text', text: m.text })
+      for (const call of m.toolCalls) content.push({ type: 'tool_use', id: call.id, name: call.name, input: call.args })
+      out.push({ role: 'assistant', content: content.length ? content : [{ type: 'text', text: '(no reply)' }] })
+    }
+  }
+  return out
+}
+
+// -- OpenAI-compatible (OpenAI, DeepSeek) --
+
+export class OpenAIChatModel implements ChatModel {
+  readonly name: string
+
+  constructor(
+    provider: string,
+    private readonly model: string,
+    private readonly client: OpenAI
+  ) {
+    this.name = `${provider}/${model}`
+  }
+
+  async complete({ system, messages, tools, forbidToolUse, signal }: CompletionRequest): Promise<AssistantMessage> {
+    const response = await this.client.chat.completions.create(
+      {
+        model: this.model,
+        messages: [{ role: 'system', content: system }, ...toOpenAIMessages(messages)],
+        ...(tools?.length
+          ? {
+              tools: tools.map((t) => ({
+                type: 'function' as const,
+                function: { name: t.name, description: t.description, parameters: t.parameters }
+              })),
+              ...(forbidToolUse ? { tool_choice: 'none' as const } : {})
+            }
+          : {})
+      },
+      { signal }
+    )
+    const message = response.choices[0]?.message
+    const toolCalls: ToolCall[] = []
+    for (const call of message?.tool_calls ?? []) {
+      if (call.type !== 'function') continue
+      let args: unknown = {}
+      try {
+        args = JSON.parse(call.function.arguments || '{}')
+      } catch {
+        // malformed arguments: run the tool with none, it reports what's missing
+      }
+      toolCalls.push({ id: call.id, name: call.function.name, args: asArgs(args) })
+    }
+    return { role: 'assistant', text: message?.content ?? '', toolCalls }
+  }
+}
+
+export function toOpenAIMessages(messages: ChatMessage[]): OpenAI.Chat.ChatCompletionMessageParam[] {
+  return messages.map((m): OpenAI.Chat.ChatCompletionMessageParam => {
+    if (m.role === 'user') return { role: 'user', content: m.text }
+    if (m.role === 'tool') return { role: 'tool', tool_call_id: m.toolCallId, content: m.content }
+    return {
+      role: 'assistant',
+      content: m.text || null,
+      ...(m.toolCalls.length
+        ? {
+            tool_calls: m.toolCalls.map((c) => ({
+              id: c.id,
+              type: 'function' as const,
+              function: { name: c.name, arguments: JSON.stringify(c.args) }
+            }))
+          }
+        : {})
+    }
+  })
+}
+
+function asArgs(input: unknown): Record<string, unknown> {
+  return input && typeof input === 'object' && !Array.isArray(input) ? (input as Record<string, unknown>) : {}
+}
+
+// -- the tool loop --
+
+export type Dispatch = (name: string, args: Record<string, unknown>) => Promise<string>
+export type OnToolCall = (name: string, args: Record<string, unknown>) => void
+
+export interface ToolLoopOptions {
+  llm: ChatModel
+  system: string
+  /** The conversation so far, ending in the user's message; extended in place. */
+  messages: ChatMessage[]
+  tools: ToolSpec[]
+  dispatch: Dispatch
+  /** Called right before each tool runs, for visibility into what the model is doing. */
+  onToolCall?: OnToolCall
+  /** Unset: loop until the model stops calling tools. Set: after that many
+   * model calls, append `budgetExhaustedNotice` and make one last call with
+   * tool use forbidden, so the model writes up what it has instead of nothing. */
+  maxRounds?: number
+  budgetExhaustedNotice?: string
+  signal?: AbortSignal
+}
+
+/**
+ * Call the model; if it called tools, run them (concurrently -- they're
+ * independent lookups) through `dispatch`, append the results, and go
+ * again. Returns the model's final text.
+ */
+export async function runToolLoop(options: ToolLoopOptions): Promise<string> {
+  const { llm, system, messages, tools, dispatch, onToolCall, maxRounds, signal } = options
+
+  for (let round = 0; maxRounds === undefined || round < maxRounds; round++) {
+    signal?.throwIfAborted()
+    const reply = await llm.complete({ system, messages, tools, signal })
+    messages.push(reply)
+    if (!reply.toolCalls.length) return reply.text
+
+    const results = await Promise.all(
+      reply.toolCalls.map((call) => {
+        onToolCall?.(call.name, call.args)
+        return dispatch(call.name, call.args)
+      })
+    )
+    reply.toolCalls.forEach((call, i) => messages.push({ role: 'tool', toolCallId: call.id, content: results[i] }))
+  }
+
+  messages.push({ role: 'user', text: options.budgetExhaustedNotice ?? 'Answer now with what you have.' })
+  signal?.throwIfAborted()
+  const final = await llm.complete({ system, messages, tools, forbidToolUse: true, signal })
+  messages.push(final)
+  return final.text
+}

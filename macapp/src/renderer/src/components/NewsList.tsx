@@ -1,4 +1,4 @@
-import type { Article, GeoArticle } from '../protocol'
+import type { Article, GeoArticle } from '../../../shared/types'
 
 function sentimentArrow(value: number | undefined): string {
   if (value === undefined) return '·'

@@ -32,9 +32,6 @@ const stoxApi: StoxApi = {
   send(command: BridgeCommand): void {
     void ipcRenderer.invoke('bridge:send', command)
   },
-  restartBackend(): void {
-    void ipcRenderer.invoke('bridge:restart')
-  },
   onEvent(listener: (event: BridgeEvent) => void): () => void {
     const handler = (_event: Electron.IpcRendererEvent, payload: BridgeEvent): void => listener(payload)
     ipcRenderer.on('bridge:event', handler)

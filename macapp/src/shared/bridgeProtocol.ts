@@ -1,7 +1,11 @@
 /**
- * Wire protocol for the chat panel's Python backend, stoxlib/bridge.py (see
- * that module's docstring for the authoritative description). Kept in sync
- * with the Python side by hand; shared by main, preload and renderer.
+ * The chat panel's protocol: commands the renderer sends, and the events a
+ * ChatSession (src/core/session.ts, in the main process) answers with over
+ * IPC. Shared by main, preload and renderer.
+ *
+ * Every event carries the id of the command it answers. A command ends with
+ * exactly one `result` or `error`; `ask` and `analyze` may send progress
+ * events (tool_call, specialist_*) before that.
  */
 
 export type BridgeCommand =
@@ -36,6 +40,9 @@ export interface SpecialistToolCallEvent extends BridgeEventBase {
   args: Record<string, unknown>
 }
 
+/** `data` per command: ask -> AgentResult, analyze -> AnalysisResult,
+ * quote -> QuoteResult, considerations_* -> {considerations: string[]},
+ * status -> ChatStatus, reset -> {}. */
 export interface ResultEvent extends BridgeEventBase {
   type: 'result'
   data: unknown
@@ -46,29 +53,13 @@ export interface ErrorEvent extends BridgeEventBase {
   message: string
 }
 
-/** Not sent by the Python side: synthesized by the main process's
- * BridgeProcess when the backend process ends, so requests still in flight
- * can be dropped. `message` is null when it was stopped deliberately. */
+/** The session was restarted (e.g. Settings changed the provider): requests
+ * still in flight will never be answered and should be dropped. `message`
+ * is null for a deliberate restart, which isn't worth showing. */
 export interface BackendExitEvent {
   id: null
   type: 'backend_exit'
   message: string | null
-}
-
-/** Sent only by the news monitor process (stoxlib/watcher.py), unprompted. */
-export interface AlertEvent {
-  id: null
-  type: 'alert'
-  alert: unknown
-}
-
-/** Sent by the news monitor process after each completed check. */
-export interface MonitorCycleEvent {
-  id: null
-  type: 'monitor_cycle'
-  at: number
-  monitors: number
-  alerts: number
 }
 
 export type BridgeEvent =
@@ -78,5 +69,3 @@ export type BridgeEvent =
   | ResultEvent
   | ErrorEvent
   | BackendExitEvent
-  | AlertEvent
-  | MonitorCycleEvent

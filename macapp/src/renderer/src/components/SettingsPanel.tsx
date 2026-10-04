@@ -33,7 +33,7 @@ export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSav
 
   const setField = (key: string, value: string) => setValues((prev) => ({ ...prev, [key]: value }))
 
-  // Saves first: the test runs in a separate backend process that reads the saved file.
+  // Saves first, so the test uses what's in the form.
   const sendTest = () => {
     setTestStatus('Sending…')
     window.stox
@@ -74,7 +74,7 @@ export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSav
         <h3 className="settings-section">API keys</h3>
         <p className="panel-sheet-hint">
           Saved to ~/.config/stox/.env — the same file the terminal CLI reads, so a key set here is
-          also picked up by `python stox.py`.
+          also picked up by `./stox`.
         </p>
         {loaded && (
           <form

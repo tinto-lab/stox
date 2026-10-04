@@ -4,7 +4,7 @@ import { TranscriptRow } from './TranscriptRow'
 
 type Bridge = ReturnType<typeof useBridge>
 
-/** Mirrors stoxlib/shell.py's handle_command/handle_query routing: a
+/** Mirrors the terminal CLI's routing (src/cli/shell.ts): a
  * slash-prefixed line is a command, everything else (including a bare
  * ticker) goes to the agent -- there's no local ticker-detection heuristic
  * on either side. */
@@ -35,9 +35,8 @@ function routeInput(raw: string, bridge: Bridge): void {
   bridge.ask(text)
 }
 
-/** The research chat, as a side panel next to the dashboard/stock view.
- * Everything in it goes through the Python backend (stoxlib/bridge.py) --
- * the one part of the app that does. */
+/** The research chat, as a side panel next to the dashboard/stock view,
+ * driven by the main process's ChatSession (src/core/session.ts). */
 export function ChatPanel({
   bridge,
   onClose,
@@ -68,7 +67,7 @@ export function ChatPanel({
     setDraft('')
   }
 
-  const needsSetup = status !== null && !status.provider_key_present
+  const needsSetup = status !== null && !status.providerKeyPresent
 
   return (
     <aside className="chat-panel">

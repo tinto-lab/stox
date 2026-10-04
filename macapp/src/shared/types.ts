@@ -1,7 +1,8 @@
 /**
- * Data shapes passed between the main process (which calls the market data
- * APIs) and the renderer (which only displays them). Included by both the
- * node and web tsconfigs, so there's one copy instead of a hand-synced pair.
+ * Data shapes shared by the core (src/core/, which calls the market data and
+ * LLM APIs), the main process, the terminal CLI and the renderer. Included
+ * by both the node and web tsconfigs, so there's one copy instead of a
+ * hand-synced pair.
  *
  * Tickers are EODHD codes throughout (`AAPL.US`, `SHOP.TO`, `BTC-USD.CC`):
  * quotes and history come from EODHD, so its symbology is the canonical one,
@@ -102,7 +103,64 @@ export interface MarketStatus {
   hasEodhdKey: boolean
 }
 
-/** A news monitor, as stoxlib/monitors.py stores it in ~/.config/stox/monitors.json. */
+/** A company news article, from EODHD's ticker-filtered news feed. */
+export interface Article {
+  title: string
+  date: string
+  link: string
+  symbols: string[]
+  /** EODHD's sentiment scores; `polarity` runs -1..1. */
+  sentiment: { polarity?: number }
+  summary: string
+}
+
+/** A world/geopolitical news article, from a Google News search. The feed
+ * carries no country or sentiment, so those stay empty for now. */
+export interface GeoArticle {
+  title: string
+  date: string
+  link: string
+  country: string
+  sentiment: string
+  summary: string
+}
+
+/** The /analyze pipeline's output: four specialist write-ups, the
+ * aggregator's verdict, and the data the specialists fetched. */
+export interface AnalysisResult {
+  ticker: string
+  trendText: string
+  fundamentalsText: string
+  newsText: string
+  geopoliticsText: string
+  verdictText: string
+  quotes: Quote[]
+  bars: Bar[]
+  articles: Article[]
+  geoArticles: GeoArticle[]
+  fundamentals: Fundamentals | null
+}
+
+/** One chat answer: the model's text plus whatever data its tools fetched. */
+export interface AgentResult {
+  text: string
+  quotes: Quote[]
+  articles: Article[]
+  geoArticles: GeoArticle[]
+  bars: Bar[]
+  fundamentals: Fundamentals | null
+  analysis: AnalysisResult | null
+}
+
+/** The chat's configuration, for the panel's setup hint. */
+export interface ChatStatus {
+  eodhdKey: boolean
+  provider: string
+  model: string
+  providerKeyPresent: boolean
+}
+
+/** A news monitor, as stored in ~/.config/stox/monitors.json. */
 export interface NewsMonitor {
   id: string
   goal: string
@@ -113,7 +171,7 @@ export interface NewsMonitor {
 
 export type AlertDirection = 'rise' | 'drop' | 'watch'
 
-/** One alert stoxlib/watcher.py raised, from ~/.config/stox/alerts.jsonl. */
+/** One alert the news watcher raised, from ~/.config/stox/alerts.jsonl. */
 export interface NewsAlert {
   id: string
   monitor_id: string
@@ -132,7 +190,7 @@ export interface MonitorsState {
   monitors: NewsMonitor[]
   /** Newest first. */
   alerts: NewsAlert[]
-  /** Whether the monitor process is running (it only runs while a monitor exists). */
+  /** Whether the monitor loop is running (it only runs while a monitor exists). */
   running: boolean
   /** Unix seconds of the last completed check, this app session. */
   lastCheckAt: number | null
@@ -158,9 +216,8 @@ export interface StoxApi {
   status(): Promise<MarketStatus>
   readWatchlist(): Promise<WatchlistEntry[]>
   writeWatchlist(entries: WatchlistEntry[]): Promise<void>
-  // Chat panel -- the Python backend (stoxlib/bridge.py), started on first send.
+  // Chat panel -- a ChatSession (src/core/session.ts) in the main process.
   send(command: BridgeCommand): void
-  restartBackend(): void
   onEvent(listener: (event: BridgeEvent) => void): () => void
   readSettings(): Promise<Record<string, string>>
   saveSettings(values: Record<string, string>): Promise<void>

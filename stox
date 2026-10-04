@@ -1,0 +1,5 @@
+#!/bin/sh
+# stox -- the terminal research console. Runs the TypeScript CLI in
+# macapp/src/cli/ from source; needs `npm install` in macapp/ once.
+dir="$(cd "$(dirname "$0")" && pwd)"
+exec "$dir/macapp/node_modules/.bin/tsx" "$dir/macapp/src/cli/index.ts" "$@"

@@ -1,7 +1,0 @@
-# Packaging-only dependency, for scripts/build_backend.sh (bundles
-# stox_bridge.py into the standalone backend macapp/'s .app packages).
-# Not needed to run stox.py or the test suite -- see requirements.txt /
-# requirements-dev.txt for those.
--r requirements.txt
-
-pyinstaller==6.22.3

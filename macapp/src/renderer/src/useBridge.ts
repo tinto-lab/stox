@@ -1,17 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { BridgeEvent } from '../../shared/bridgeProtocol'
 import type {
-  AgentResultData,
+  AgentResult,
   AnalysisResult,
   Article,
   Bar,
-  BridgeEvent,
-  ConsiderationsData,
+  ChatStatus,
   Fundamentals,
   GeoArticle,
   Quote,
-  QuoteResultData,
-  StatusData
-} from './protocol'
+  QuoteResult
+} from '../../shared/types'
 
 export type TranscriptItem =
   | { kind: 'user_message'; id: string; text: string }
@@ -39,14 +38,14 @@ function makeId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
 
-/** Chat state for the side panel, driven by the Python backend. `enabled`
- * stays false until the panel is first opened, so a session that only
- * uses the dashboard never starts the backend. */
+/** Chat state for the side panel, driven by the main process's ChatSession.
+ * `enabled` stays false until the panel is first opened, so a session that
+ * only uses the dashboard never asks for the chat's status. */
 export function useBridge(enabled: boolean) {
   const [transcript, setTranscript] = useState<TranscriptItem[]>([])
   const [isBusy, setIsBusy] = useState(false)
   const [considerations, setConsiderations] = useState<string[]>([])
-  const [status, setStatus] = useState<StatusData | null>(null)
+  const [status, setStatus] = useState<ChatStatus | null>(null)
   const pending = useRef(new Map<string, PendingKind>())
 
   const append = useCallback((item: TranscriptItem) => {
@@ -105,22 +104,11 @@ export function useBridge(enabled: boolean) {
 
       switch (requestKind) {
         case 'ask': {
-          const data = event.data as AgentResultData
-          append({
-            kind: 'assistant_result',
-            id: event.id,
-            text: data.text,
-            quotes: data.quotes,
-            articles: data.articles,
-            geoArticles: data.geo_articles,
-            bars: data.bars,
-            fundamentals: data.fundamentals,
-            analysis: data.analysis
-          })
+          append({ kind: 'assistant_result', id: event.id, ...(event.data as AgentResult) })
           break
         }
         case 'quote': {
-          const data = event.data as QuoteResultData
+          const data = event.data as QuoteResult
           append({ kind: 'quote_result', id: event.id, quotes: data.quotes, missing: data.missing })
           break
         }
@@ -134,9 +122,9 @@ export function useBridge(enabled: boolean) {
         }
         default: {
           // considerations_list / considerations_add / considerations_remove / status
-          const data = event.data as Partial<ConsiderationsData & StatusData>
+          const data = event.data as Partial<{ considerations: string[] } & ChatStatus>
           if (data.considerations) setConsiderations(data.considerations)
-          if (data.provider) setStatus(data as StatusData)
+          if (data.provider) setStatus(data as ChatStatus)
         }
       }
     })
@@ -144,8 +132,7 @@ export function useBridge(enabled: boolean) {
     return unsubscribe
   }, [append])
 
-  // Asking for considerations/status is what first spawns the Python
-  // backend, so it waits until the chat panel is actually opened.
+  // Fetched when the chat panel is first opened.
   useEffect(() => {
     if (!enabled) return
     refreshConsiderations()

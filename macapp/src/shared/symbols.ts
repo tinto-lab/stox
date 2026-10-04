@@ -1,4 +1,4 @@
-/** Same convention as stoxlib/quotes.normalize: a bare symbol is a US listing. */
+/** EODHD's convention: a bare symbol is a US listing. */
 export function normalize(ticker: string): string {
   const t = ticker.trim().toUpperCase()
   return t.includes('.') ? t : `${t}.US`

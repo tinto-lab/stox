@@ -1,4 +1,4 @@
-import type { Quote } from '../protocol'
+import type { Quote } from '../../../shared/types'
 
 function formatVolume(volume: number): string {
   if (volume >= 1_000_000) return `${(volume / 1_000_000).toFixed(1)}M`
