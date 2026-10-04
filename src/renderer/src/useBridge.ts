@@ -6,10 +6,12 @@ import type {
   Article,
   Bar,
   ChatStatus,
+  ConversationSummary,
   Fundamentals,
   GeoArticle,
   Quote,
-  QuoteResult
+  QuoteResult,
+  ResumedConversation
 } from '../../shared/types'
 
 export type TranscriptItem =
@@ -44,6 +46,8 @@ export type TranscriptItem =
       endedAt: number | null
     }
   | { kind: 'error'; id: string; message: string }
+  /** A divider, e.g. marking where a resumed conversation picks up. */
+  | { kind: 'notice'; id: string; text: string }
 
 type ReasoningItem = Extract<TranscriptItem, { kind: 'reasoning' }>
 
@@ -82,7 +86,22 @@ function addReasoning(items: TranscriptItem[], id: string, agent: string | null,
   ]
 }
 
-type PendingKind = 'ask' | 'quote' | 'analyze' | 'reset'
+type PendingKind = 'ask' | 'quote' | 'analyze' | 'reset' | 'resume'
+
+/** A saved conversation's turns as transcript rows, then a divider saying
+ * the panels above are as they were then. */
+function resumedTranscript(conversation: ResumedConversation): TranscriptItem[] {
+  const items: TranscriptItem[] = conversation.turns.flatMap((turn, index): TranscriptItem[] => {
+    const id = `${conversation.id}-${index}`
+    return [
+      { kind: 'user_message', id, text: turn.text },
+      { kind: 'assistant_result', id, ...turn.result }
+    ]
+  })
+  const when = new Date(conversation.updatedAt).toLocaleString()
+  items.push({ kind: 'notice', id: makeId(), text: `Resumed conversation from ${when}` })
+  return items
+}
 
 function makeId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
@@ -96,6 +115,8 @@ export function useBridge(enabled: boolean) {
   const [isBusy, setIsBusy] = useState(false)
   const [considerations, setConsiderations] = useState<string[]>([])
   const [status, setStatus] = useState<ChatStatus | null>(null)
+  // null while a list is on its way, so the menu doesn't flash an old or empty one.
+  const [conversations, setConversations] = useState<ConversationSummary[] | null>(null)
   const pending = useRef(new Map<string, PendingKind>())
 
   const append = useCallback((item: TranscriptItem) => {
@@ -177,10 +198,17 @@ export function useBridge(enabled: boolean) {
           setTranscript([])
           break
         }
+        case 'resume': {
+          setTranscript(resumedTranscript(event.data as ResumedConversation))
+          break
+        }
         default: {
-          // considerations_list / considerations_add / considerations_remove / status / set_thinking
-          const data = event.data as Partial<{ considerations: string[] } & ChatStatus>
+          // considerations_* / conversations_list / status / set_thinking
+          const data = event.data as Partial<
+            { considerations: string[]; conversations: ConversationSummary[] } & ChatStatus
+          >
           if (data.considerations) setConsiderations(data.considerations)
+          if (data.conversations) setConversations(data.conversations)
           if (data.provider) setStatus(data as ChatStatus)
         }
       }
@@ -235,6 +263,18 @@ export function useBridge(enabled: boolean) {
     window.stox.send({ id, cmd: 'reset' })
   }, [])
 
+  const listConversations = useCallback(() => {
+    setConversations(null)
+    window.stox.send({ id: makeId(), cmd: 'conversations_list' })
+  }, [])
+
+  const resume = useCallback((conversationId: string) => {
+    const id = makeId()
+    pending.current.set(id, 'resume')
+    setIsBusy(true)
+    window.stox.send({ id, cmd: 'resume', conversationId })
+  }, [])
+
   const addConsideration = useCallback((text: string) => {
     window.stox.send({ id: makeId(), cmd: 'considerations_add', text })
   }, [])
@@ -253,10 +293,13 @@ export function useBridge(enabled: boolean) {
     isBusy,
     considerations,
     status,
+    conversations,
     ask,
     quote,
     analyze,
     reset,
+    listConversations,
+    resume,
     addConsideration,
     removeConsideration,
     setThinking,

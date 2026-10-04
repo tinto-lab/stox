@@ -4,8 +4,8 @@ import { normalize } from '../shared/symbols'
 import { askAgent, recordAnalysis } from './agent'
 import { runStockAnalysis } from './analysis'
 import { addConsideration, loadConsiderations, removeConsideration } from './considerations'
+import { Conversation, listConversations } from './conversations'
 import {
-  type ChatMessage,
   buildLLM,
   currentProviderName,
   describeCurrent,
@@ -21,12 +21,14 @@ import { fetchQuotes, hasEodhdKey } from './marketData'
  * BridgeEvents (see shared/bridgeProtocol.ts) -- the chat panel's backend,
  * run in the app's main process.
  *
- * Commands that read or change the conversation (ask, analyze, reset) run
- * one at a time, in order, so two quick questions can't interleave their
- * turns in the history; the rest answer immediately.
+ * Commands that read or change the conversation (ask, analyze, reset,
+ * resume) run one at a time, in order, so two quick questions can't
+ * interleave their turns in the history; the rest answer immediately.
+ * Each answered question is saved (see conversations.ts), so the
+ * conversation can be resumed later.
  */
 export class ChatSession {
-  private history: ChatMessage[] = []
+  private conversation = new Conversation()
   private queue: Promise<void> = Promise.resolve()
   private abort = new AbortController()
 
@@ -41,20 +43,19 @@ export class ChatSession {
             // Aborted by restart(): nobody's waiting for this one any more.
             if (!signal.aborted) this.emit({ id: command.id, type: 'error', message: errorMessage(e) })
           })
-    if (command.cmd === 'ask' || command.cmd === 'analyze' || command.cmd === 'reset') {
+    if (command.cmd === 'ask' || command.cmd === 'analyze' || command.cmd === 'reset' || command.cmd === 'resume') {
       this.queue = this.queue.then(run)
     } else {
       void run()
     }
   }
 
-  /** Abandons whatever is in flight and starts a fresh conversation, e.g.
-   * after Settings change the provider. Requests in flight get no answer;
-   * a backend_exit event tells the renderer to stop waiting for them. */
+  /** Abandons whatever is in flight, e.g. after Settings change the
+   * provider; the conversation so far carries on. Requests in flight get no
+   * answer; a backend_exit event tells the renderer to stop waiting for them. */
   restart(): void {
     this.abort.abort()
     this.abort = new AbortController()
-    this.history = []
     this.queue = Promise.resolve()
     this.emit({ id: null, type: 'backend_exit', message: null })
   }
@@ -81,7 +82,8 @@ export class ChatSession {
 
     switch (command.cmd) {
       case 'ask': {
-        const data = await askAgent(buildLLM(), command.text, this.history, {
+        const conversation = this.conversation
+        const data = await askAgent(buildLLM(), command.text, conversation.history, {
           signal,
           onToolCall: (name, args) => this.emit({ id, type: 'tool_call', name, args }),
           onAnalysisAgentStart: (name) => this.emit({ id, type: 'specialist_start', name }),
@@ -91,7 +93,15 @@ export class ChatSession {
           onAnalysisReasoningStep: reasoningStep,
           onAnalysisReasoning: reasoning
         })
-        return result(data)
+        if (signal.aborted) return
+        result(data)
+        try {
+          conversation.recordAsk(command.text, data)
+        } catch (e) {
+          // The answer stands; it just won't be there to resume.
+          this.emit({ id: null, type: 'error', message: `couldn't save the conversation: ${errorMessage(e)}` })
+        }
+        return
       }
       case 'analyze': {
         const data = await runStockAnalysis(buildLLM(), command.ticker, {
@@ -102,14 +112,20 @@ export class ChatSession {
           onReasoning: reasoning
         })
         if (signal.aborted) return
-        recordAnalysis(this.history, normalize(command.ticker), data)
+        recordAnalysis(this.conversation.history, normalize(command.ticker), data)
         return result(data)
       }
       case 'quote':
         return result(await fetchQuotes(command.tickers))
       case 'reset':
-        this.history = []
+        this.conversation = new Conversation()
         return result({})
+      case 'conversations_list':
+        return result({ conversations: listConversations() })
+      case 'resume': {
+        this.conversation = Conversation.resume(command.conversationId)
+        return result({ ...this.conversation.summary, turns: [...this.conversation.turns] })
+      }
       case 'considerations_list':
         return result({ considerations: loadConsiderations() })
       case 'considerations_add':

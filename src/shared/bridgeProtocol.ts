@@ -13,6 +13,8 @@ export type BridgeCommand =
   | { id: string; cmd: 'quote'; tickers: string[] }
   | { id: string; cmd: 'analyze'; ticker: string }
   | { id: string; cmd: 'reset' }
+  | { id: string; cmd: 'conversations_list' }
+  | { id: string; cmd: 'resume'; conversationId: string }
   | { id: string; cmd: 'considerations_list' }
   | { id: string; cmd: 'considerations_add'; text: string }
   | { id: string; cmd: 'considerations_remove'; text: string }
@@ -55,7 +57,9 @@ export interface ReasoningEvent extends BridgeEventBase {
 
 /** `data` per command: ask -> AgentResult, analyze -> AnalysisResult,
  * quote -> QuoteResult, considerations_* -> {considerations: string[]},
- * status and set_thinking -> ChatStatus, reset -> {}. */
+ * status and set_thinking -> ChatStatus, reset -> {},
+ * conversations_list -> {conversations: ConversationSummary[]},
+ * resume -> ResumedConversation. */
 export interface ResultEvent extends BridgeEventBase {
   type: 'result'
   data: unknown

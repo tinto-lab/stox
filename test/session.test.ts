@@ -73,6 +73,53 @@ describe('ChatSession', () => {
     expect(llm.requests[2].messages).toHaveLength(1)
   })
 
+  it('saves each answered question, and resumes it in a fresh session', async () => {
+    llmHolder.current = new FakeLLM([say('one'), say('two'), say('three')])
+    const first = session()
+    first.chat.handle({ id: '1', cmd: 'ask', text: 'first' })
+    first.chat.handle({ id: '2', cmd: 'ask', text: 'second' })
+    await first.settle()
+    first.chat.handle({ id: '3', cmd: 'conversations_list' })
+    await first.settle()
+    const listed = first.events.find((e) => e.id === '3') as { data: { conversations: { id: string }[] } }
+    expect(listed.data.conversations).toMatchObject([{ title: 'first', turnCount: 2 }])
+
+    const llm = new FakeLLM([say('three')])
+    llmHolder.current = llm
+    const second = session()
+    second.chat.handle({ id: 'r', cmd: 'resume', conversationId: listed.data.conversations[0].id })
+    second.chat.handle({ id: '4', cmd: 'ask', text: 'third' })
+    await second.settle()
+    const resumed = second.events.find((e) => e.id === 'r') as { data: { turns: { text: string }[] } }
+    expect(resumed.data.turns.map((t) => t.text)).toEqual(['first', 'second'])
+    expect(llm.requests[0].messages.map((m) => (m as { text?: string }).text)).toEqual([
+      'first',
+      'one',
+      'second',
+      'two',
+      'third'
+    ])
+  })
+
+  it('reports resuming a missing conversation as an error', async () => {
+    const { chat, events, settle } = session()
+    chat.handle({ id: 'r', cmd: 'resume', conversationId: 'nope' })
+    await settle()
+    expect(events).toEqual([{ id: 'r', type: 'error', message: 'no saved conversation nope' }])
+  })
+
+  it('keeps the conversation across a restart', async () => {
+    const llm = new FakeLLM([say('one'), say('two')])
+    llmHolder.current = llm
+    const { chat, settle } = session()
+    chat.handle({ id: '1', cmd: 'ask', text: 'first' })
+    await settle()
+    chat.restart()
+    chat.handle({ id: '2', cmd: 'ask', text: 'second' })
+    await settle()
+    expect(llm.requests[1].messages).toHaveLength(3)
+  })
+
   it('runs an analysis with specialist progress, and records it for follow-ups', async () => {
     data.fetchQuotes.mockResolvedValue({ quotes: [quote()], missing: [] })
     const llm = new RoutedLLM({

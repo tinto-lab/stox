@@ -52,6 +52,9 @@ export function TranscriptRow({ item }: { item: TranscriptItem }) {
     case 'error':
       return <div className="row error">✗ {item.message}</div>
 
+    case 'notice':
+      return <div className="row notice">{item.text}</div>
+
     default:
       return null
   }

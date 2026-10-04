@@ -152,6 +152,29 @@ export interface AgentResult {
   analysis: AnalysisResult | null
 }
 
+/** One saved question and its answer, as the user saw it. */
+export interface SavedTurn {
+  text: string
+  result: AgentResult
+  /** ISO time it was answered. */
+  at: string
+}
+
+/** A saved conversation, as offered for resuming. */
+export interface ConversationSummary {
+  id: string
+  /** The first question, shortened. */
+  title: string
+  /** ISO time of the last answered question. */
+  updatedAt: string
+  turnCount: number
+}
+
+/** A resumed conversation, for re-showing its transcript. */
+export interface ResumedConversation extends ConversationSummary {
+  turns: SavedTurn[]
+}
+
 /** The chat's configuration, for the panel's setup hint. */
 export interface ChatStatus {
   eodhdKey: boolean

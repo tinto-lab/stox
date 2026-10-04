@@ -6,8 +6,8 @@ import { askAgent, recordAnalysis } from '../core/agent'
 import { runStockAnalysis } from '../core/analysis'
 import { configDir } from '../core/config'
 import { considerationsPath, loadConsiderations } from '../core/considerations'
+import { Conversation, conversationsDir, listConversations } from '../core/conversations'
 import {
-  type ChatMessage,
   buildLLM,
   currentProviderName,
   describeCurrent,
@@ -44,7 +44,8 @@ const HELP = `${bold('commands')}
                    "what about its news?" and "read that first one in
                    full" work, /analyze results included; "always factor in
                    insider selling when you explain price moves" saves a
-                   standing note
+                   standing note; every conversation is saved -- pick
+                   one up later with /resume
   /price <ticker> [...]  instant quote(s), no LLM involved:
                          AAPL   or   TSLA MSFT NVDA
   /analyze <ticker>  trend, fundamentals, news, and geopolitics specialist
@@ -53,6 +54,8 @@ const HELP = `${bold('commands')}
   /help            this message
   /clear           clear the screen
   /reset           forget the conversation so far (also /new)
+  /resume [n]      list saved conversations, or pick up number n where it
+                   left off (launch with stox --continue for the latest)
   /considerations  list standing factors the agent always weighs (also /remembered)
   /think [on|off]  show or switch thinking mode (DeepSeek) -- deeper answers,
                    but slower; saved for next time, shared with the app
@@ -81,9 +84,13 @@ ${bold('setup')}
     STOX_LLM_THINKING=on|off  DeepSeek thinking mode (default: off), or /think
 
   standing considerations persist to ~/.config/stox/considerations.txt --
-  plain text, one per line, safe to hand-edit or delete.`
+  plain text, one per line, safe to hand-edit or delete. conversations are
+  saved to ~/.config/stox/conversations/ (questions you asked and their
+  answers, not /analyze or /price) -- plain JSON, safe to delete.`
 
 const HISTORY_SIZE = 1000
+const RESUME_LIST_SIZE = 10
+const RECAP_TURNS = 5
 
 const print = (text = ''): void => {
   process.stdout.write(text + '\n')
@@ -122,8 +129,18 @@ function analysisProgress(out: ReasoningPrinter) {
   }
 }
 
+/** "5m ago", "3h ago", "2d ago", else the date. */
+function ago(iso: string, now = Date.now()): string {
+  const minutes = Math.max(0, Math.round((now - Date.parse(iso)) / 60_000))
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+  if (minutes < 24 * 60) return `${Math.round(minutes / 60)}h ago`
+  if (minutes < 7 * 24 * 60) return `${Math.round(minutes / (24 * 60))}d ago`
+  return iso.slice(0, 10)
+}
+
 export class Shell {
-  private history: ChatMessage[] = []
+  private conversation = new Conversation()
   // The question or analysis in flight, so ctrl+c can cancel it.
   private running: AbortController | null = null
 
@@ -151,8 +168,11 @@ export class Shell {
         break
       case '/reset':
       case '/new':
-        this.history = []
-        print(dim('conversation forgotten -- starting fresh.'))
+        this.conversation = new Conversation()
+        print(dim('starting a new conversation -- the last one is saved, see /resume.'))
+        break
+      case '/resume':
+        this.handleResume(rest[0])
         break
       case '/considerations':
       case '/remembered':
@@ -180,6 +200,60 @@ export class Shell {
     if (!this.running) return false
     this.running.abort()
     return true
+  }
+
+  /** Picks up the latest saved conversation, e.g. for `stox --continue`. */
+  resumeLatest(): void {
+    const latest = Conversation.latest()
+    if (!latest) {
+      print(dim('no saved conversations yet -- starting a new one.'))
+      return
+    }
+    this.resume(latest)
+  }
+
+  /** No argument: lists the saved conversations; a number: resumes that one. */
+  private handleResume(arg?: string): void {
+    const saved = listConversations(RESUME_LIST_SIZE)
+    if (!arg) {
+      if (!saved.length) {
+        print(dim('no saved conversations yet -- ask something and it will be.'))
+        return
+      }
+      print(dim(`saved conversations (${conversationsDir()}):`))
+      saved.forEach((c, i) => {
+        const turns = `${c.turnCount} question${c.turnCount === 1 ? '' : 's'}`
+        print(`  ${bold(String(i + 1).padStart(2))}  ${c.title}  ${dim(`· ${ago(c.updatedAt)} · ${turns}`)}`)
+      })
+      print(dim('resume one with /resume <number>'))
+      return
+    }
+    const n = Number(arg)
+    if (!Number.isInteger(n) || n < 1 || n > saved.length) {
+      print(`${style('red', 'usage:')} /resume <number> ${dim('(see /resume for the list)')}`)
+      return
+    }
+    try {
+      this.resume(Conversation.resume(saved[n - 1].id))
+    } catch (e) {
+      fail(errorMessage(e))
+    }
+  }
+
+  /** Switches to `conversation` and recaps its last few turns -- text only:
+   * the data panels it showed then would be stale now. */
+  private resume(conversation: Conversation): void {
+    this.conversation = conversation
+    const { title, updatedAt } = conversation.summary
+    print(dim(`resumed "${title}" · last answered ${ago(updatedAt)}`))
+    const recap = conversation.turns.slice(-RECAP_TURNS)
+    const earlier = conversation.turns.length - recap.length
+    if (earlier) print(dim(`  … ${earlier} earlier question${earlier === 1 ? '' : 's'}`))
+    for (const turn of recap) {
+      print(dim(`› ${turn.text}`))
+      if (turn.result.text) print(turn.result.text)
+    }
+    print()
   }
 
   /** Thinking applies from the next question on; the conversation carries on. */
@@ -226,9 +300,10 @@ export class Shell {
     print(dim(`→ agent (${describeCurrent()}) · ${text}`))
     const out = new ReasoningPrinter()
     const analysis = analysisProgress(out)
+    const conversation = this.conversation
     const result = await this.cancellable(
       (signal) =>
-        askAgent(buildLLM(), text, this.history, {
+        askAgent(buildLLM(), text, conversation.history, {
         signal,
         onToolCall: (name, args) => out.line(toolCallLine(name, args)),
         onReasoningStep: () => out.step(),
@@ -246,6 +321,11 @@ export class Shell {
     const data = showResultData(result)
     if (data) print(data)
     if (result.analysis) print(showAnalysis(result.analysis))
+    try {
+      conversation.recordAsk(text, result)
+    } catch (e) {
+      fail(`couldn't save the conversation: ${errorMessage(e)}`)
+    }
   }
 
   private async handleAnalyze(ticker: string): Promise<void> {
@@ -265,7 +345,7 @@ export class Shell {
     const data = showResultData(result)
     if (data) print(data)
     print(showAnalysis(result))
-    recordAnalysis(this.history, code, result)
+    recordAnalysis(this.conversation.history, code, result)
   }
 
   /** Runs `fn`, printing its failure; null if it failed or was cancelled.
@@ -310,7 +390,7 @@ function saveLineHistory(lines: string[]): void {
   }
 }
 
-export async function runRepl(): Promise<void> {
+export async function runRepl(options: { continueLatest?: boolean } = {}): Promise<void> {
   print(panel(BANNER, 'stox', 'cyan'))
   if (!hasEodhdKey()) print(`${style('yellow', '!')} no EODHD_API_KEY set -- see ${bold('/help')}.\n`)
   if (!providerKeyPresent()) {
@@ -321,6 +401,7 @@ export async function runRepl(): Promise<void> {
   }
 
   const shell = new Shell()
+  if (options.continueLatest) shell.resumeLatest()
   let lineHistory = loadLineHistory()
   const rl = readline.createInterface({
     input: process.stdin,

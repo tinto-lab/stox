@@ -828,8 +828,77 @@ body.resizing {
   color: var(--error-fg);
 }
 
+.row.notice {
+  align-self: stretch;
+  padding: 2px 0;
+  font-size: 11px;
+  text-align: center;
+  color: var(--faint);
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+}
+
 .assistant-text {
   margin: 0 0 6px 0;
+}
+
+/* -- saved conversations (History) -- */
+
+.history {
+  position: relative;
+}
+
+.history-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 10;
+  width: 300px;
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.history-menu li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 6px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.history-menu li:hover {
+  background: var(--hover);
+}
+
+.history-menu li.history-empty {
+  color: var(--dim);
+  cursor: default;
+}
+
+.history-menu li.history-empty:hover {
+  background: none;
+}
+
+.history-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-meta {
+  color: var(--dim);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .chip {

@@ -4,10 +4,9 @@ import { configDir } from './config'
 
 /**
  * Standing considerations: factors the user has asked the agent to always
- * weigh when explaining a price move or assessing risk. Unlike the chat's
- * conversation history (in memory, one session), these live on disk --
- * plain text, one per line, fine to hand-edit -- so they apply in every
- * future session too.
+ * weigh when explaining a price move or assessing risk. Unlike a chat
+ * conversation (saved, but only in play once resumed), these apply in
+ * every session -- plain text, one per line, fine to hand-edit.
  */
 
 export function considerationsPath(): string {

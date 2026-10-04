@@ -17,6 +17,7 @@ import {
 import { ReasoningPrinter } from '../src/cli/reasoning'
 import { Shell } from '../src/cli/shell'
 import { addConsideration } from '../src/core/considerations'
+import { Conversation } from '../src/core/conversations'
 import { article, bar, fundamentals, geoArticle, quote } from './helpers'
 
 const plain = (s: string): string => stripVTControlCharacters(s)
@@ -146,6 +147,30 @@ describe('shell commands', () => {
     expect(process.env.STOX_LLM_THINKING).toBe('on')
     await shell.handleLine('/think sideways')
     expect(plain(output)).toContain('usage: /think [on|off]')
+  })
+
+  it('/resume lists saved conversations and picks one up with a recap', async () => {
+    const shell = new Shell()
+    await shell.handleLine('/resume')
+    expect(plain(output)).toContain('no saved conversations yet')
+
+    const conv = new Conversation()
+    for (const [q, a] of [['apple?', 'AAPL is 227.'], ['its news?', 'Nothing new.']]) {
+      conv.history.push({ role: 'user', text: q }, { role: 'assistant', text: a, toolCalls: [] })
+      conv.recordAsk(q, { text: a, quotes: [], articles: [], geoArticles: [], bars: [], fundamentals: null, analysis: null })
+    }
+    await shell.handleLine('/resume')
+    expect(plain(output)).toMatch(/ 1 {2}apple\? {2}· just now · 2 questions/)
+    await shell.handleLine('/resume 2')
+    expect(plain(output)).toContain('usage: /resume <number>')
+    await shell.handleLine('/resume 1')
+    expect(plain(output)).toContain('resumed "apple?"')
+    expect(plain(output)).toContain('› its news?\nNothing new.')
+  })
+
+  it('resumeLatest says when there is nothing to resume', () => {
+    new Shell().resumeLatest()
+    expect(plain(output)).toContain('no saved conversations yet -- starting a new one.')
   })
 
   it('/quit and /exit leave', async () => {

@@ -12,12 +12,13 @@ import { runRepl } from './shell'
 loadEnv(path.resolve(__dirname, '..', '..', '.env'))
 
 async function main(command = ''): Promise<void> {
-  if (command) {
-    console.error(`unknown command: ${command} -- run stox with no arguments`)
+  const continueLatest = command === '--continue' || command === '-c'
+  if (command && !continueLatest) {
+    console.error(`unknown command: ${command} -- run stox with no arguments, or --continue to resume the last conversation`)
     process.exitCode = 2
     return
   }
-  await runRepl()
+  await runRepl({ continueLatest })
 }
 
 void main(process.argv[2])

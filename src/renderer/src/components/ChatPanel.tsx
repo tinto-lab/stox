@@ -1,14 +1,67 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { ConversationSummary } from '../../../shared/types'
 import type { useBridge } from '../useBridge'
 import { TranscriptRow } from './TranscriptRow'
 
 type Bridge = ReturnType<typeof useBridge>
 
+/** "5m ago", "3h ago", "2d ago", else the date. */
+function ago(iso: string): string {
+  const minutes = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60_000))
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+  if (minutes < 24 * 60) return `${Math.round(minutes / 60)}h ago`
+  if (minutes < 7 * 24 * 60) return `${Math.round(minutes / (24 * 60))}d ago`
+  return new Date(iso).toLocaleDateString()
+}
+
+/** Saved conversations to pick one up from, below the History button. */
+function HistoryMenu({
+  conversations,
+  onPick,
+  onClose
+}: {
+  conversations: ConversationSummary[] | null
+  onPick: (id: string) => void
+  onClose: () => void
+}) {
+  const ref = useRef<HTMLUListElement | null>(null)
+
+  // Closes on a click anywhere else, or Escape.
+  useEffect(() => {
+    const onMouseDown = (e: MouseEvent): void => {
+      if (!ref.current?.parentElement?.contains(e.target as Node)) onClose()
+    }
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('mousedown', onMouseDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [onClose])
+
+  return (
+    <ul className="history-menu" ref={ref} role="menu">
+      {conversations === null && <li className="history-empty">Loading…</li>}
+      {conversations?.length === 0 && <li className="history-empty">No saved conversations yet.</li>}
+      {conversations?.map((c) => (
+        <li key={c.id} role="menuitem" onClick={() => onPick(c.id)} title={c.title}>
+          <span className="history-title">{c.title}</span>
+          <span className="history-meta">{ago(c.updatedAt)}</span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 /** Mirrors the terminal CLI's routing (src/cli/shell.ts): a
  * slash-prefixed line is a command, everything else (including a bare
  * ticker) goes to the agent -- there's no local ticker-detection heuristic
  * on either side. */
-function routeInput(raw: string, bridge: Bridge): void {
+function routeInput(raw: string, bridge: Bridge, openHistory: () => void): void {
   const text = raw.trim()
   if (!text) return
 
@@ -27,6 +80,10 @@ function routeInput(raw: string, bridge: Bridge): void {
     }
     if (command === '/reset' || command === '/new') {
       bridge.reset()
+      return
+    }
+    if (command === '/resume') {
+      openHistory()
       return
     }
     return
@@ -48,8 +105,14 @@ export function ChatPanel({
   onOpenConsiderations: () => void
   onOpenSettings: () => void
 }) {
-  const { transcript, isBusy, status, reset, setThinking } = bridge
+  const { transcript, isBusy, status, reset, setThinking, conversations, listConversations, resume } = bridge
   const [draft, setDraft] = useState('')
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const openHistory = (): void => {
+    listConversations()
+    setHistoryOpen(true)
+  }
+  const closeHistory = useCallback(() => setHistoryOpen(false), [])
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
 
@@ -65,7 +128,7 @@ export function ChatPanel({
 
   const submit = (): void => {
     if (isBusy) return
-    routeInput(draft, bridge)
+    routeInput(draft, bridge, openHistory)
     setDraft('')
   }
 
@@ -90,6 +153,26 @@ export function ChatPanel({
           <button onClick={reset} title="Start a new conversation">
             New
           </button>
+          <div className="history">
+            <button
+              onClick={() => (historyOpen ? closeHistory() : openHistory())}
+              disabled={isBusy}
+              aria-expanded={historyOpen}
+              title="Pick up a saved conversation"
+            >
+              History
+            </button>
+            {historyOpen && (
+              <HistoryMenu
+                conversations={conversations}
+                onClose={closeHistory}
+                onPick={(id) => {
+                  closeHistory()
+                  resume(id)
+                }}
+              />
+            )}
+          </div>
           <button onClick={onOpenConsiderations} title="Factors the agent always weighs">
             Considerations
           </button>
@@ -110,7 +193,7 @@ export function ChatPanel({
         {transcript.length === 0 && (
           <p className="chat-empty">
             Ask about a company or the market, or use <code>/price AAPL</code>, <code>/analyze NVDA</code>,{' '}
-            <code>/reset</code>.
+            <code>/reset</code>, <code>/resume</code>.
           </p>
         )}
         {transcript.map((item, index) => (
