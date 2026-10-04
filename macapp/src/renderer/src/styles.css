@@ -416,6 +416,16 @@ button:disabled {
   flex-shrink: 0;
 }
 
+.sparkline-wrap {
+  transition: opacity 0.15s;
+}
+
+/* Like the detail chart: the end point comes from the live quote, so it dims while one is loading. */
+.sparkline-wrap.refreshing {
+  opacity: 0.4;
+  filter: grayscale(1);
+}
+
 .empty-state {
   max-width: 380px;
   margin: 12vh auto 0;

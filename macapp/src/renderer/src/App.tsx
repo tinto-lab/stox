@@ -221,6 +221,7 @@ export default function App() {
               watchlist={watchlist}
               quotes={quotes}
               missing={missing}
+              refreshing={refreshesInFlight > 0}
               onOpen={setSelected}
               onUnpin={(code) => saveWatchlist(watchlist.filter((e) => e.code !== code))}
               onRearrange={saveWatchlist}

@@ -16,6 +16,7 @@ function TickerCard({
   entry,
   quote,
   missing,
+  refreshing,
   dragging,
   onOpen,
   onUnpin,
@@ -27,6 +28,8 @@ function TickerCard({
   entry: WatchlistEntry
   quote: Quote | undefined
   missing: boolean
+  /** A quote refresh is in flight -- the sparkline dims until the new price lands. */
+  refreshing: boolean
   dragging: boolean
   onOpen: () => void
   onUnpin: () => void
@@ -107,7 +110,7 @@ function TickerCard({
               {fmtChange(quote.change, quote.price)} ({fmtSignedPercent(quote.percent)})
             </div>
           </div>
-          <div title="Last month">
+          <div className={`sparkline-wrap${refreshing ? ' refreshing' : ''}`} title="Last month" aria-busy={refreshing}>
             <Sparkline bars={liveBars} />
           </div>
         </div>
@@ -140,6 +143,7 @@ export function Dashboard({
   watchlist,
   quotes,
   missing,
+  refreshing,
   onOpen,
   onUnpin,
   onRearrange,
@@ -148,6 +152,7 @@ export function Dashboard({
   watchlist: WatchlistEntry[]
   quotes: Record<string, Quote>
   missing: Set<string>
+  refreshing: boolean
   onOpen: (entry: WatchlistEntry) => void
   onUnpin: (code: string) => void
   onRearrange: (next: WatchlistEntry[]) => void
@@ -238,6 +243,7 @@ export function Dashboard({
           entry={entry}
           quote={quotes[entry.code]}
           missing={missing.has(entry.code)}
+          refreshing={refreshing}
           dragging={dragged === entry.code}
           onOpen={() => onOpen(entry)}
           onUnpin={() => onUnpin(entry.code)}
