@@ -53,9 +53,11 @@ export function ChatPanel({
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
 
+  // Follows new rows, and reasoning as it grows.
+  const lastText = transcript.at(-1)?.kind === 'reasoning' ? (transcript.at(-1) as { text: string }).text.length : 0
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
-  }, [transcript.length])
+  }, [transcript.length, lastText])
 
   useEffect(() => {
     inputRef.current?.focus()
@@ -68,6 +70,7 @@ export function ChatPanel({
   }
 
   const needsSetup = status !== null && !status.providerKeyPresent
+  const reasoningLive = transcript.some((item) => item.kind === 'reasoning' && item.endedAt === null && item.text !== '')
 
   return (
     <aside className="chat-panel">
@@ -113,7 +116,8 @@ export function ChatPanel({
         {transcript.map((item, index) => (
           <TranscriptRow key={`${item.id}-${index}`} item={item} />
         ))}
-        {isBusy && <div className="chip chip-dim">thinking…</div>}
+        {/* With thinking mode on, the live reasoning block already shows progress. */}
+        {isBusy && !reasoningLive && <div className="chip chip-dim">thinking…</div>}
       </div>
 
       <form

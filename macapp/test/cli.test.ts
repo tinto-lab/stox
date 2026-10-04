@@ -14,6 +14,7 @@ import {
   table,
   wrap
 } from '../src/cli/render'
+import { ReasoningPrinter } from '../src/cli/reasoning'
 import { Shell } from '../src/cli/shell'
 import { addConsideration } from '../src/core/considerations'
 import { article, bar, fundamentals, geoArticle, quote } from './helpers'
@@ -149,5 +150,45 @@ describe('shell commands', () => {
   it('/quit and /exit leave', async () => {
     expect(await new Shell().handleLine('/quit')).toBe(false)
     expect(await new Shell().handleLine('/EXIT')).toBe(false)
+  })
+})
+
+describe('ReasoningPrinter', () => {
+  const printer = () => {
+    let out = ''
+    return { r: new ReasoningPrinter((t) => (out += t)), text: () => plain(out) }
+  }
+
+  it("streams the chat agent's reasoning under a label, and closes it before other output", () => {
+    const { r, text } = printer()
+    r.step()
+    r.delta('The user wants ')
+    r.delta('a quote.')
+    r.line('  ↳ get_stock_quote()')
+    r.step()
+    r.delta('Now answer.')
+    r.end()
+    expect(text()).toBe('  thinking… The user wants a quote.\n  ↳ get_stock_quote()\n  thinking… Now answer.\n')
+  })
+
+  it('word-wraps a long stream at the terminal width', () => {
+    const { r, text } = printer()
+    r.delta(Array.from({ length: 60 }, (_, i) => `word${i}`).join(' '))
+    r.end()
+    const lines = text().trimEnd().split('\n')
+    expect(lines.length).toBeGreaterThan(1)
+    for (const line of lines) expect(line.length).toBeLessThanOrEqual(100)
+    expect(lines.slice(1).every((l) => l.startsWith('  '))).toBe(true)
+  })
+
+  it('prints each specialist as a whole labelled block, never interleaved', () => {
+    const { r, text } = printer()
+    r.agentDelta('trend', 'Bars show ')
+    r.agentDelta('news', 'Headlines are ')
+    r.agentDelta('trend', 'an uptrend.')
+    r.agentDelta('news', 'mixed.')
+    r.agentStep('trend') // trend's next model call: its first block is done
+    r.end()
+    expect(text()).toBe('  [trend] thought 1s: Bars show an uptrend.\n  [news] thought 1s: Headlines are mixed.\n')
   })
 })

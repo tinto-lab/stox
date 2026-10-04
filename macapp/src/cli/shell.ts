@@ -18,6 +18,7 @@ import {
 } from '../core/llm'
 import { fetchQuotes, hasEodhdKey } from '../core/marketData'
 import { normalize } from '../shared/symbols'
+import { ReasoningPrinter } from './reasoning'
 import { bold, dim, panel, showAnalysis, showQuotes, showResultData, style } from './render'
 
 /**
@@ -98,10 +99,28 @@ function formatArgs(args: Record<string, unknown>): string {
 
 // Tool-call lines are dimmed as a whole: args trace back through the model,
 // which may have read external text, so they're never parsed for styling.
-const printToolCall = (name: string, args: Record<string, unknown>): void => print(dim(`  ↳ ${name}(${formatArgs(args)})`))
-const printSpecialistToolCall = (agent: string, name: string, args: Record<string, unknown>): void =>
-  print(dim(`  ↳ [${agent}] ${name}(${formatArgs(args)})`))
-const printAgentStart = (name: string): void => print(dim(`→ ${name} agent`))
+const toolCallLine = (name: string, args: Record<string, unknown>): string => dim(`  ↳ ${name}(${formatArgs(args)})`)
+const specialistToolCallLine = (agent: string, name: string, args: Record<string, unknown>): string =>
+  dim(`  ↳ [${agent}] ${name}(${formatArgs(args)})`)
+const agentStartLine = (name: string): string => dim(`→ ${name} agent`)
+
+/** Progress callbacks for /analyze's specialists, printed through `out` so
+ * their lines and reasoning blocks never land mid-way through a stream. */
+function analysisProgress(out: ReasoningPrinter) {
+  return {
+    onAgentStart: (name: string) => {
+      // The aggregator starts once every specialist is done: print what they thought first.
+      if (name === 'aggregator') out.flush()
+      out.line(agentStartLine(name))
+    },
+    onToolCall: (agent: string, name: string, args: Record<string, unknown>) => {
+      out.flush(agent)
+      out.line(specialistToolCallLine(agent, name, args))
+    },
+    onReasoningStep: (agent: string) => out.agentStep(agent),
+    onReasoning: (agent: string, delta: string) => out.agentDelta(agent, delta)
+  }
+}
 
 export class Shell {
   private history: ChatMessage[] = []
@@ -205,13 +224,21 @@ export class Shell {
 
   private async handleQuery(text: string): Promise<void> {
     print(dim(`→ agent (${describeCurrent()}) · ${text}`))
-    const result = await this.cancellable((signal) =>
-      askAgent(buildLLM(), text, this.history, {
+    const out = new ReasoningPrinter()
+    const analysis = analysisProgress(out)
+    const result = await this.cancellable(
+      (signal) =>
+        askAgent(buildLLM(), text, this.history, {
         signal,
-        onToolCall: printToolCall,
-        onAnalysisAgentStart: printAgentStart,
-        onAnalysisToolCall: printSpecialistToolCall
-      })
+        onToolCall: (name, args) => out.line(toolCallLine(name, args)),
+        onReasoningStep: () => out.step(),
+        onReasoning: (delta) => out.delta(delta),
+        onAnalysisAgentStart: analysis.onAgentStart,
+        onAnalysisToolCall: analysis.onToolCall,
+        onAnalysisReasoningStep: analysis.onReasoningStep,
+        onAnalysisReasoning: analysis.onReasoning
+      }),
+      out
     )
     if (!result) return
     if (result.text) print(result.text)
@@ -228,12 +255,10 @@ export class Shell {
         `→ analyzing ${code} · trend, fundamentals, news, and geopolitics run concurrently, then an aggregator · please wait`
       )
     )
-    const result = await this.cancellable((signal) =>
-      runStockAnalysis(buildLLM(), ticker, {
-        signal,
-        onAgentStart: printAgentStart,
-        onToolCall: printSpecialistToolCall
-      })
+    const out = new ReasoningPrinter()
+    const result = await this.cancellable(
+      (signal) => runStockAnalysis(buildLLM(), ticker, { signal, ...analysisProgress(out) }),
+      out
     )
     if (!result) return
     print()
@@ -243,13 +268,17 @@ export class Shell {
     recordAnalysis(this.history, code, result)
   }
 
-  /** Runs `fn`, printing its failure; null if it failed or was cancelled. */
-  private async cancellable<T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T | null> {
+  /** Runs `fn`, printing its failure; null if it failed or was cancelled.
+   * `out`'s open reasoning is closed off before anything else is printed. */
+  private async cancellable<T>(fn: (signal: AbortSignal) => Promise<T>, out?: ReasoningPrinter): Promise<T | null> {
     const controller = new AbortController()
     this.running = controller
     try {
-      return await fn(controller.signal)
+      const result = await fn(controller.signal)
+      out?.end()
+      return result
     } catch (e) {
+      out?.end()
       if (controller.signal.aborted) print(dim('cancelled.'))
       else fail(errorMessage(e))
       return null

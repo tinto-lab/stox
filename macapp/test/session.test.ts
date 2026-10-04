@@ -124,6 +124,48 @@ describe('ChatSession', () => {
     })
   })
 
+  it('streams reasoning events, numbered per model call and attributed to the agent', async () => {
+    process.env.STOX_LLM_PROVIDER = 'deepseek'
+    process.env.STOX_LLM_THINKING = 'on'
+    data.fetchQuotes.mockResolvedValue({ quotes: [quote()], missing: [] })
+    const think = (text: string, reply: ReturnType<typeof say>) => (req: { onReasoning?: (d: string) => void }) => {
+      req.onReasoning?.(text)
+      return reply
+    }
+    llmHolder.current = new FakeLLM([
+      think('Need a quote.', calls(call('get_stock_quote', { tickers: ['AAPL'] }))),
+      think('Got it.', say('AAPL is up.'))
+    ])
+    const { chat, events, settle } = session()
+    chat.handle({ id: 'a', cmd: 'ask', text: 'apple?' })
+    await settle()
+    // Each model call opens with an empty delta marking its start.
+    expect(events.map((e) => (e.type === 'reasoning' ? `reasoning ${e.step}:${e.delta}` : e.type))).toEqual([
+      'reasoning 1:',
+      'reasoning 1:Need a quote.',
+      'tool_call',
+      'reasoning 2:',
+      'reasoning 2:Got it.',
+      'result'
+    ])
+    expect(events[1]).toEqual({ id: 'a', type: 'reasoning', agent: null, step: 1, delta: 'Need a quote.' })
+
+    llmHolder.current = new RoutedLLM({
+      trend: [think('Looking at bars.', say('trend'))],
+      fundamentals: [say('fundamentals')],
+      news: [say('news')],
+      geopolitics: [say('geo')],
+      aggregator: [think('Weighing it up.', say('Hold.'))]
+    })
+    chat.handle({ id: 'b', cmd: 'analyze', ticker: 'AAPL' })
+    await settle()
+    const reasoning = events.filter((e) => e.id === 'b' && e.type === 'reasoning' && e.delta)
+    expect(reasoning).toEqual([
+      { id: 'b', type: 'reasoning', agent: 'trend', step: 1, delta: 'Looking at bars.' },
+      { id: 'b', type: 'reasoning', agent: 'aggregator', step: 1, delta: 'Weighing it up.' }
+    ])
+  })
+
   it('switches thinking mode, answering with the new status', async () => {
     process.env.STOX_LLM_PROVIDER = 'deepseek'
     const { chat, events, settle } = session()

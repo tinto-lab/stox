@@ -280,6 +280,64 @@ describe('DeepSeek thinking mode', () => {
   })
 })
 
+describe('DeepSeek reasoning streaming', () => {
+  const chunk = (delta: Record<string, unknown>) => ({ choices: [{ delta }] })
+  async function* chunks() {
+    yield chunk({ reasoning_content: 'Need the ' })
+    yield chunk({ reasoning_content: 'quote and news.' })
+    yield chunk({ tool_calls: [{ index: 0, id: 'c1', function: { name: 'get_stock_quote', arguments: '{"tick' } }] })
+    yield chunk({ tool_calls: [{ index: 1, id: 'c2', function: { name: 'get_stock_news', arguments: '' } }] })
+    yield chunk({ tool_calls: [{ index: 0, function: { arguments: 'ers":["AAPL"]}' } }] })
+    yield chunk({ tool_calls: [{ index: 1, function: { arguments: '{"tickers":["AAPL"]}' } }] })
+    yield chunk({ content: 'Checking' })
+    yield chunk({ content: '.' })
+    yield { choices: [] }
+  }
+  const fake = () => {
+    const create = vi.fn(async (params: { stream?: boolean }) =>
+      params.stream ? chunks() : { choices: [{ message: { content: 'plain' } }] }
+    )
+    return { client: { chat: { completions: { create } } } as unknown as OpenAI, create }
+  }
+
+  it('streams with thinking on, forwarding reasoning and assembling the same reply', async () => {
+    const { client, create } = fake()
+    const deltas: string[] = []
+    const reply = await new OpenAIChatModel('deepseek', 'deepseek-flash', client, true).complete({
+      system: 's',
+      messages: [{ role: 'user', text: 'q' }],
+      onReasoning: (d) => deltas.push(d)
+    })
+    expect(create.mock.calls[0][0].stream).toBe(true)
+    expect(deltas).toEqual(['Need the ', 'quote and news.'])
+    expect(reply).toEqual({
+      role: 'assistant',
+      text: 'Checking.',
+      toolCalls: [
+        { id: 'c1', name: 'get_stock_quote', args: { tickers: ['AAPL'] } },
+        { id: 'c2', name: 'get_stock_news', args: { tickers: ['AAPL'] } }
+      ],
+      raw: { provider: 'deepseek', content: 'Need the quote and news.' }
+    })
+  })
+
+  it("doesn't stream with thinking off or nobody listening", async () => {
+    for (const [thinking, onReasoning] of [
+      [false, () => undefined],
+      [true, undefined]
+    ] as const) {
+      const { client, create } = fake()
+      const reply = await new OpenAIChatModel('deepseek', 'deepseek-flash', client, thinking).complete({
+        system: 's',
+        messages: [{ role: 'user', text: 'q' }],
+        onReasoning
+      })
+      expect(create.mock.calls[0][0].stream).toBeUndefined()
+      expect(reply.text).toBe('plain')
+    }
+  })
+})
+
 describe('runToolLoop', () => {
   const tools = [{ name: 'lookup', description: 'd', parameters: {} }]
 
@@ -333,6 +391,24 @@ describe('runToolLoop', () => {
     expect(last.forbidToolUse).toBe(true)
     expect(last.tools).toEqual(tools)
     expect(last.messages.at(-1)).toEqual({ role: 'user', text: 'answer now' })
+  })
+
+  it('announces every model call, including the forced final one, and passes reasoning through', async () => {
+    const llm = new FakeLLM([calls(call('lookup')), say('final')])
+    const onStep = vi.fn()
+    const onReasoning = vi.fn()
+    await runToolLoop({
+      llm,
+      system: 's',
+      messages: [{ role: 'user', text: 'q' }],
+      tools,
+      dispatch: async () => 'data',
+      maxRounds: 1,
+      onStep,
+      onReasoning
+    })
+    expect(onStep).toHaveBeenCalledTimes(2)
+    expect(llm.requests.every((r) => r.onReasoning === onReasoning)).toBe(true)
   })
 
   it('stops when aborted', async () => {

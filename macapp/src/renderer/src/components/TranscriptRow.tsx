@@ -3,6 +3,7 @@ import { AnalysisView } from './AnalysisView'
 import { FundamentalsCard } from './FundamentalsCard'
 import { GeoNewsList, NewsList } from './NewsList'
 import { QuoteCard } from './QuoteCard'
+import { ReasoningBlock } from './ReasoningBlock'
 import { SpecialistStartChip, SpecialistToolCallChip, ToolCallChip } from './ToolCallChip'
 
 export function TranscriptRow({ item }: { item: TranscriptItem }) {
@@ -44,6 +45,9 @@ export function TranscriptRow({ item }: { item: TranscriptItem }) {
 
     case 'specialist_tool_call':
       return <SpecialistToolCallChip agent={item.agent} name={item.name} args={item.args} />
+
+    case 'reasoning':
+      return <ReasoningBlock item={item} />
 
     case 'error':
       return <div className="row error">✗ {item.message}</div>

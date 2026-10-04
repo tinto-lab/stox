@@ -5,7 +5,7 @@
  *
  * Every event carries the id of the command it answers. A command ends with
  * exactly one `result` or `error`; `ask` and `analyze` may send progress
- * events (tool_call, specialist_*) before that.
+ * events (tool_call, specialist_*, reasoning) before that.
  */
 
 export type BridgeCommand =
@@ -41,6 +41,18 @@ export interface SpecialistToolCallEvent extends BridgeEventBase {
   args: Record<string, unknown>
 }
 
+/** A piece of the model's reasoning as it streams in (DeepSeek thinking
+ * mode). `agent` is null for the chat agent, else the /analyze stage
+ * thinking ("trend", ..., "aggregator"); `step` counts that agent's model
+ * calls, so each call's reasoning reads as its own block. Each call opens
+ * with an empty delta, marking when it started. */
+export interface ReasoningEvent extends BridgeEventBase {
+  type: 'reasoning'
+  agent: string | null
+  step: number
+  delta: string
+}
+
 /** `data` per command: ask -> AgentResult, analyze -> AnalysisResult,
  * quote -> QuoteResult, considerations_* -> {considerations: string[]},
  * status and set_thinking -> ChatStatus, reset -> {}. */
@@ -67,6 +79,7 @@ export type BridgeEvent =
   | ToolCallEvent
   | SpecialistStartEvent
   | SpecialistToolCallEvent
+  | ReasoningEvent
   | ResultEvent
   | ErrorEvent
   | BackendExitEvent

@@ -1,6 +1,6 @@
 import type { AnalysisResult, Article, Bar, Fundamentals, GeoArticle, Quote } from '../shared/types'
 import { loadConsiderations } from './considerations'
-import { type ChatModel, type Dispatch, type OnToolCall, type ToolSpec, runToolLoop } from './llm'
+import { type ChatModel, type Dispatch, type ToolLoopOptions, type ToolSpec, runToolLoop } from './llm'
 import {
   TOOL_SPECS,
   UNKNOWN_ARTICLE_URL_ERROR,
@@ -40,6 +40,10 @@ export interface AnalysisCallbacks {
   onAgentStart?: (name: SpecialistName | 'aggregator') => void
   /** Like the chat agent's onToolCall, plus which specialist made the call. */
   onToolCall?: (agent: SpecialistName, name: string, args: Record<string, unknown>) => void
+  /** Like ToolLoopOptions' onStep/onReasoning, plus which agent it's about
+   * -- the specialists think concurrently, the aggregator last. */
+  onReasoningStep?: (agent: SpecialistName | 'aggregator') => void
+  onReasoning?: (agent: SpecialistName | 'aggregator', delta: string) => void
   signal?: AbortSignal
 }
 
@@ -47,14 +51,16 @@ export interface AnalysisCallbacks {
  * articles one at a time can spend every round on tools. Rather than
  * render that as "no answer", the budget running out forces one last call
  * with tools forbidden, so it writes up what it already gathered. */
+/** One specialist's progress callbacks and cancellation, already bound to it. */
+type SpecialistHooks = Pick<ToolLoopOptions, 'onToolCall' | 'onStep' | 'onReasoning' | 'signal'>
+
 function runSpecialist(
   llm: ChatModel,
   system: string,
   tools: ToolSpec[],
   prompt: string,
   dispatch: Dispatch,
-  onToolCall: OnToolCall | undefined,
-  signal: AbortSignal | undefined
+  hooks: SpecialistHooks
 ): Promise<string> {
   return runToolLoop({
     llm,
@@ -62,10 +68,9 @@ function runSpecialist(
     messages: [{ role: 'user', text: prompt }],
     tools,
     dispatch,
-    onToolCall,
     maxRounds: MAX_TOOL_ROUNDS,
     budgetExhaustedNotice: BUDGET_EXHAUSTED_NOTICE,
-    signal
+    ...hooks
   })
 }
 
@@ -77,7 +82,7 @@ export const TREND_AGENT_SYSTEM =
   "get_stock_quote for today's price and change. In 2-4 sentences, describe the trend: direction, " +
   'momentum, volatility, and where the price sits versus its recent high/low range. ' + NO_VERDICT
 
-async function runTrendAgent(llm: ChatModel, ticker: string, onToolCall?: OnToolCall, signal?: AbortSignal) {
+async function runTrendAgent(llm: ChatModel, ticker: string, hooks: SpecialistHooks) {
   let quotes: Quote[] = []
   let bars: Bar[] = []
   const dispatch: Dispatch = async (name, args) => {
@@ -96,7 +101,7 @@ async function runTrendAgent(llm: ChatModel, ticker: string, onToolCall?: OnTool
   }
   const text = await runSpecialist(
     llm, TREND_AGENT_SYSTEM, [TOOL_SPECS.get_stock_quote, TOOL_SPECS.get_price_history],
-    `Analyze the price trend for ${ticker}.`, dispatch, onToolCall, signal
+    `Analyze the price trend for ${ticker}.`, dispatch, hooks
   )
   return { text, quotes, bars }
 }
@@ -106,7 +111,7 @@ export const FUNDAMENTALS_AGENT_SYSTEM =
   "company's profitability and valuation in 2-4 sentences: margins, EBITDA, revenue/earnings growth, " +
   'and whether the valuation (P/E, PEG) looks rich or cheap. ' + NO_VERDICT
 
-async function runFundamentalsAgent(llm: ChatModel, ticker: string, onToolCall?: OnToolCall, signal?: AbortSignal) {
+async function runFundamentalsAgent(llm: ChatModel, ticker: string, hooks: SpecialistHooks) {
   let fundamentals: Fundamentals | null = null
   const dispatch: Dispatch = async (name, args) => {
     if (name === 'get_company_fundamentals') {
@@ -118,7 +123,7 @@ async function runFundamentalsAgent(llm: ChatModel, ticker: string, onToolCall?:
   }
   const text = await runSpecialist(
     llm, FUNDAMENTALS_AGENT_SYSTEM, [TOOL_SPECS.get_company_fundamentals],
-    `Analyze the fundamentals for ${ticker}.`, dispatch, onToolCall, signal
+    `Analyze the fundamentals for ${ticker}.`, dispatch, hooks
   )
   return { text, fundamentals: fundamentals as Fundamentals | null }
 }
@@ -127,7 +132,7 @@ export const NEWS_AGENT_SYSTEM =
   "You are stox's news analyst. Given a ticker, call get_stock_news and summarize in 2-4 sentences the " +
   'sentiment and any notable catalysts or risks. ' + NO_VERDICT
 
-async function runNewsAgent(llm: ChatModel, ticker: string, onToolCall?: OnToolCall, signal?: AbortSignal) {
+async function runNewsAgent(llm: ChatModel, ticker: string, hooks: SpecialistHooks) {
   let articles: Article[] = []
   const knownUrls = new Set<string>()
   const dispatch: Dispatch = async (name, args) => {
@@ -146,7 +151,7 @@ async function runNewsAgent(llm: ChatModel, ticker: string, onToolCall?: OnToolC
   }
   const text = await runSpecialist(
     llm, NEWS_AGENT_SYSTEM, [TOOL_SPECS.get_stock_news, TOOL_SPECS.read_article],
-    `Analyze recent news for ${ticker}.`, dispatch, onToolCall, signal
+    `Analyze recent news for ${ticker}.`, dispatch, hooks
   )
   return { text, articles }
 }
@@ -166,7 +171,7 @@ export const GEO_SEARCH_BUDGET_NOTICE =
   `error: you've used up your ${MAX_GEO_SEARCHES} searches for this run -- work with what you already ` +
   'have instead of searching again'
 
-async function runGeopoliticsAgent(llm: ChatModel, ticker: string, onToolCall?: OnToolCall, signal?: AbortSignal) {
+async function runGeopoliticsAgent(llm: ChatModel, ticker: string, hooks: SpecialistHooks) {
   let articles: GeoArticle[] = []
   const knownUrls = new Set<string>()
   let searches = 0
@@ -189,7 +194,7 @@ async function runGeopoliticsAgent(llm: ChatModel, ticker: string, onToolCall?: 
   }
   const text = await runSpecialist(
     llm, GEOPOLITICS_AGENT_SYSTEM, [TOOL_SPECS.get_geopolitical_news, TOOL_SPECS.read_article],
-    `Analyze geopolitical and macro risk for ${ticker}.`, dispatch, onToolCall, signal
+    `Analyze geopolitical and macro risk for ${ticker}.`, dispatch, hooks
   )
   return { text, articles }
 }
@@ -220,24 +225,34 @@ function aggregatorSystemPrompt(): string {
 export async function runStockAnalysis(
   llm: ChatModel,
   ticker: string,
-  { onAgentStart, onToolCall, signal }: AnalysisCallbacks = {}
+  { onAgentStart, onToolCall, onReasoningStep, onReasoning, signal }: AnalysisCallbacks = {}
 ): Promise<AnalysisResult> {
-  const toolCallFor = (agent: SpecialistName): OnToolCall | undefined =>
-    onToolCall && ((name, args) => onToolCall(agent, name, args))
+  const hooksFor = (agent: SpecialistName): SpecialistHooks => ({
+    onToolCall: onToolCall && ((name, args) => onToolCall(agent, name, args)),
+    onStep: onReasoningStep && (() => onReasoningStep(agent)),
+    onReasoning: onReasoning && ((delta) => onReasoning(agent, delta)),
+    signal
+  })
 
   for (const name of ['trend', 'fundamentals', 'news', 'geopolitics'] as const) onAgentStart?.(name)
   const [trend, fundamentals, news, geopolitics] = await Promise.all([
-    runTrendAgent(llm, ticker, toolCallFor('trend'), signal),
-    runFundamentalsAgent(llm, ticker, toolCallFor('fundamentals'), signal),
-    runNewsAgent(llm, ticker, toolCallFor('news'), signal),
-    runGeopoliticsAgent(llm, ticker, toolCallFor('geopolitics'), signal)
+    runTrendAgent(llm, ticker, hooksFor('trend')),
+    runFundamentalsAgent(llm, ticker, hooksFor('fundamentals')),
+    runNewsAgent(llm, ticker, hooksFor('news')),
+    runGeopoliticsAgent(llm, ticker, hooksFor('geopolitics'))
   ])
 
   onAgentStart?.('aggregator')
   const prompt =
     `Ticker: ${ticker}\n\nTrend analysis:\n${trend.text}\n\nFundamentals analysis:\n${fundamentals.text}\n\n` +
     `News analysis:\n${news.text}\n\nGeopolitical analysis:\n${geopolitics.text}`
-  const verdict = await llm.complete({ system: aggregatorSystemPrompt(), messages: [{ role: 'user', text: prompt }], signal })
+  onReasoningStep?.('aggregator')
+  const verdict = await llm.complete({
+    system: aggregatorSystemPrompt(),
+    messages: [{ role: 'user', text: prompt }],
+    onReasoning: onReasoning && ((delta) => onReasoning('aggregator', delta)),
+    signal
+  })
 
   return {
     ticker,

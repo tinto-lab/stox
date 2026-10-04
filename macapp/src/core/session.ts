@@ -66,13 +66,30 @@ export class ChatSession {
       if (!signal.aborted) this.emit({ id, type: 'result', data })
     }
 
+    // Each agent's model calls are numbered, so the UI can start a fresh
+    // reasoning block per call. With thinking on, an empty delta marks the
+    // call's start, so the UI can time the thinking from there.
+    const thinking = thinkingSupported() && thinkingSetting()
+    const steps = new Map<string | null, number>()
+    const reasoningStep = (agent: string | null): void => {
+      steps.set(agent, (steps.get(agent) ?? 0) + 1)
+      if (thinking) reasoning(agent, '')
+    }
+    const reasoning = (agent: string | null, delta: string): void => {
+      if (!signal.aborted) this.emit({ id, type: 'reasoning', agent, step: steps.get(agent) ?? 1, delta })
+    }
+
     switch (command.cmd) {
       case 'ask': {
         const data = await askAgent(buildLLM(), command.text, this.history, {
           signal,
           onToolCall: (name, args) => this.emit({ id, type: 'tool_call', name, args }),
           onAnalysisAgentStart: (name) => this.emit({ id, type: 'specialist_start', name }),
-          onAnalysisToolCall: (agent, name, args) => this.emit({ id, type: 'specialist_tool_call', agent, name, args })
+          onAnalysisToolCall: (agent, name, args) => this.emit({ id, type: 'specialist_tool_call', agent, name, args }),
+          onReasoningStep: () => reasoningStep(null),
+          onReasoning: (delta) => reasoning(null, delta),
+          onAnalysisReasoningStep: reasoningStep,
+          onAnalysisReasoning: reasoning
         })
         return result(data)
       }
@@ -80,7 +97,9 @@ export class ChatSession {
         const data = await runStockAnalysis(buildLLM(), command.ticker, {
           signal,
           onAgentStart: (name) => this.emit({ id, type: 'specialist_start', name }),
-          onToolCall: (agent, name, args) => this.emit({ id, type: 'specialist_tool_call', agent, name, args })
+          onToolCall: (agent, name, args) => this.emit({ id, type: 'specialist_tool_call', agent, name, args }),
+          onReasoningStep: reasoningStep,
+          onReasoning: reasoning
         })
         if (signal.aborted) return
         recordAnalysis(this.history, normalize(command.ticker), data)

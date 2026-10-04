@@ -30,7 +30,57 @@ export type TranscriptItem =
   | { kind: 'tool_call'; id: string; name: string; args: Record<string, unknown> }
   | { kind: 'specialist_start'; id: string; name: string }
   | { kind: 'specialist_tool_call'; id: string; agent: string; name: string; args: Record<string, unknown> }
+  | {
+      kind: 'reasoning'
+      id: string
+      /** null for the chat agent, else the /analyze stage. */
+      agent: string | null
+      step: number
+      text: string
+      /** When the model call started, and its latest delta: how long it spent reasoning. */
+      startedAt: number
+      lastAt: number
+      /** Set once that model call has moved on (a tool call, the next step, the result). */
+      endedAt: number | null
+    }
   | { kind: 'error'; id: string; message: string }
+
+type ReasoningItem = Extract<TranscriptItem, { kind: 'reasoning' }>
+
+/** Marks the still-streaming reasoning of request `id` as done -- only
+ * `agent`'s, or every agent's when `agent` is undefined. */
+function endReasoning(items: TranscriptItem[], id: string, agent?: string | null): TranscriptItem[] {
+  const now = Date.now()
+  let changed = false
+  const next = items.map((item) => {
+    if (item.kind !== 'reasoning' || item.id !== id || item.endedAt !== null) return item
+    if (agent !== undefined && item.agent !== agent) return item
+    changed = true
+    return { ...item, endedAt: now }
+  })
+  return changed ? next : items
+}
+
+/** Appends a reasoning delta to its block, starting the block (and ending
+ * that agent's previous one) on the first delta of a new step. */
+function addReasoning(items: TranscriptItem[], id: string, agent: string | null, step: number, delta: string): TranscriptItem[] {
+  let index = items.length - 1
+  while (index >= 0) {
+    const item = items[index]
+    if (item.kind === 'reasoning' && item.id === id && item.agent === agent && item.step === step) break
+    index--
+  }
+  if (index !== -1) {
+    const item = items[index] as ReasoningItem
+    const next = [...items]
+    next[index] = { ...item, text: item.text + delta, lastAt: Date.now() }
+    return next
+  }
+  return [
+    ...endReasoning(items, id, agent),
+    { kind: 'reasoning', id, agent, step, text: delta, startedAt: Date.now(), lastAt: Date.now(), endedAt: null }
+  ]
+}
 
 type PendingKind = 'ask' | 'quote' | 'analyze' | 'reset'
 
@@ -74,8 +124,17 @@ export function useBridge(enabled: boolean) {
         return
       }
 
+      const id = event.id
+      if (event.type === 'reasoning') {
+        setTranscript((prev) => addReasoning(prev, id, event.agent, event.step, event.delta))
+        return
+      }
+      // Anything else from a request means the model call that was thinking has moved on.
       if (event.type === 'tool_call') {
-        append({ kind: 'tool_call', id: event.id, name: event.name, args: event.args })
+        setTranscript((prev) => [
+          ...endReasoning(prev, id, null),
+          { kind: 'tool_call', id, name: event.name, args: event.args }
+        ])
         return
       }
       if (event.type === 'specialist_start') {
@@ -83,16 +142,14 @@ export function useBridge(enabled: boolean) {
         return
       }
       if (event.type === 'specialist_tool_call') {
-        append({
-          kind: 'specialist_tool_call',
-          id: event.id,
-          agent: event.agent,
-          name: event.name,
-          args: event.args
-        })
+        setTranscript((prev) => [
+          ...endReasoning(prev, id, event.agent),
+          { kind: 'specialist_tool_call', id, agent: event.agent, name: event.name, args: event.args }
+        ])
         return
       }
 
+      setTranscript((prev) => endReasoning(prev, id))
       const requestKind = pending.current.get(event.id)
       pending.current.delete(event.id)
       if (requestKind) setIsBusy(false)

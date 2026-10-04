@@ -114,6 +114,13 @@ export interface AskCallbacks {
   /** Progress from the specialists when the model calls analyze_stock. */
   onAnalysisAgentStart?: AnalysisCallbacks['onAgentStart']
   onAnalysisToolCall?: AnalysisCallbacks['onToolCall']
+  /** Called before each model call, then with the reasoning as it streams
+   * in (DeepSeek thinking mode). */
+  onReasoningStep?: () => void
+  onReasoning?: (delta: string) => void
+  /** The same, from the specialists when the model calls analyze_stock. */
+  onAnalysisReasoningStep?: AnalysisCallbacks['onReasoningStep']
+  onAnalysisReasoning?: AnalysisCallbacks['onReasoning']
   signal?: AbortSignal
 }
 
@@ -177,6 +184,8 @@ export async function askAgent(
           analysis = await runStockAnalysis(llm, argString(args, 'ticker'), {
             onAgentStart: callbacks.onAnalysisAgentStart,
             onToolCall: callbacks.onAnalysisToolCall,
+            onReasoningStep: callbacks.onAnalysisReasoningStep,
+            onReasoning: callbacks.onAnalysisReasoning,
             signal: callbacks.signal
           })
         } catch (e) {
@@ -215,6 +224,8 @@ export async function askAgent(
     tools: ALL_TOOLS,
     dispatch,
     onToolCall: callbacks.onToolCall,
+    onStep: callbacks.onReasoningStep,
+    onReasoning: callbacks.onReasoning,
     signal: callbacks.signal
   })
 

@@ -826,6 +826,47 @@ body.resizing {
   opacity: 0.8;
 }
 
+/* -- thinking-mode reasoning -- */
+
+.reasoning {
+  align-self: stretch;
+  font-size: 11px;
+  color: var(--dim);
+  background: var(--chip-bg);
+  border-radius: 6px;
+}
+
+.reasoning-head {
+  all: unset;
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 3px 8px;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.reasoning-head:disabled {
+  cursor: default;
+}
+
+.reasoning-live .reasoning-head {
+  font-style: italic;
+}
+
+.reasoning-body {
+  padding: 0 8px 6px;
+  white-space: pre-wrap;
+  line-height: 1.45;
+}
+
+/* While streaming: a short window onto the latest lines. */
+.reasoning-body-live {
+  max-height: 6.5em;
+  overflow-y: auto;
+}
+
 .card-title {
   font-weight: 600;
   margin-bottom: 6px;

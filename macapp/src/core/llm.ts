@@ -47,6 +47,9 @@ export interface CompletionRequest {
   tools?: ToolSpec[]
   /** Keep `tools` declared (history may hold calls to them) but forbid new calls. */
   forbidToolUse?: boolean
+  /** Receives the model's reasoning as it streams in, where the model
+   * exposes it (DeepSeek in thinking mode); otherwise never called. */
+  onReasoning?: (delta: string) => void
   signal?: AbortSignal
 }
 
@@ -250,45 +253,85 @@ export class OpenAIChatModel implements ChatModel {
     this.name = `${provider}/${model}`
   }
 
-  async complete({ system, messages, tools, forbidToolUse, signal }: CompletionRequest): Promise<AssistantMessage> {
-    const response = await this.client.chat.completions.create(
-      {
-        model: this.model,
-        messages: [{ role: 'system', content: system }, ...toOpenAIMessages(messages, this.provider)],
-        ...(this.thinking === undefined ? {} : { thinking: { type: this.thinking ? 'enabled' : 'disabled' } }),
-        ...(tools?.length
-          ? {
-              tools: tools.map((t) => ({
-                type: 'function' as const,
-                function: { name: t.name, description: t.description, parameters: t.parameters }
-              })),
-              ...(forbidToolUse ? { tool_choice: 'none' as const } : {})
-            }
-          : {})
-      },
-      { signal }
-    )
+  async complete({
+    system,
+    messages,
+    tools,
+    forbidToolUse,
+    onReasoning,
+    signal
+  }: CompletionRequest): Promise<AssistantMessage> {
+    const params = {
+      model: this.model,
+      messages: [{ role: 'system' as const, content: system }, ...toOpenAIMessages(messages, this.provider)],
+      ...(this.thinking === undefined ? {} : { thinking: { type: this.thinking ? 'enabled' : 'disabled' } }),
+      ...(tools?.length
+        ? {
+            tools: tools.map((t) => ({
+              type: 'function' as const,
+              function: { name: t.name, description: t.description, parameters: t.parameters }
+            })),
+            ...(forbidToolUse ? { tool_choice: 'none' as const } : {})
+          }
+        : {})
+    }
+
+    // Streamed only when someone is watching the reasoning: the reply is the
+    // same either way, it just arrives in pieces.
+    if (onReasoning && this.thinking) {
+      const stream = await this.client.chat.completions.create({ ...params, stream: true }, { signal })
+      let text = ''
+      let reasoning = ''
+      const calls: { id: string; name: string; arguments: string }[] = []
+      for await (const chunk of stream) {
+        const delta = chunk.choices[0]?.delta as
+          | (OpenAI.Chat.ChatCompletionChunk.Choice.Delta & { reasoning_content?: string | null })
+          | undefined
+        if (!delta) continue
+        if (delta.reasoning_content) {
+          reasoning += delta.reasoning_content
+          onReasoning(delta.reasoning_content)
+        }
+        if (delta.content) text += delta.content
+        // A call's id and name come in its first fragment, the arguments
+        // spread over the rest; `index` says which call a fragment belongs to.
+        for (const fragment of delta.tool_calls ?? []) {
+          const call = (calls[fragment.index] ??= { id: '', name: '', arguments: '' })
+          if (fragment.id) call.id = fragment.id
+          if (fragment.function?.name) call.name += fragment.function.name
+          if (fragment.function?.arguments) call.arguments += fragment.function.arguments
+        }
+      }
+      return this.reply(text, reasoning, calls.filter(Boolean))
+    }
+
+    const response = await this.client.chat.completions.create(params, { signal })
     const message = response.choices[0]?.message
-    const toolCalls: ToolCall[] = []
-    for (const call of message?.tool_calls ?? []) {
-      if (call.type !== 'function') continue
+    const calls = (message?.tool_calls ?? []).flatMap((c) =>
+      c.type === 'function' ? [{ id: c.id, name: c.function.name, arguments: c.function.arguments }] : []
+    )
+    const reasoning = (message as { reasoning_content?: unknown } | undefined)?.reasoning_content
+    return this.reply(message?.content ?? '', typeof reasoning === 'string' ? reasoning : '', calls)
+  }
+
+  private reply(text: string, reasoning: string, calls: { id: string; name: string; arguments: string }[]): AssistantMessage {
+    const toolCalls = calls.map((call): ToolCall => {
       let args: unknown = {}
       try {
-        args = JSON.parse(call.function.arguments || '{}')
+        args = JSON.parse(call.arguments || '{}')
       } catch {
         // malformed arguments: run the tool with none, it reports what's missing
       }
-      toolCalls.push({ id: call.id, name: call.function.name, args: asArgs(args) })
-    }
+      return { id: call.id, name: call.name, args: asArgs(args) }
+    })
     // DeepSeek's thinking mode returns the reasoning alongside the answer.
     // With tools in the request it must be sent back on later requests (a
     // 400 otherwise), so it rides along in `raw`.
-    const reasoning = (message as { reasoning_content?: unknown } | undefined)?.reasoning_content
     return {
       role: 'assistant',
-      text: message?.content ?? '',
+      text,
       toolCalls,
-      ...(typeof reasoning === 'string' && reasoning ? { raw: { provider: this.provider, content: reasoning } } : {})
+      ...(reasoning ? { raw: { provider: this.provider, content: reasoning } } : {})
     }
   }
 }
@@ -334,6 +377,11 @@ export interface ToolLoopOptions {
   dispatch: Dispatch
   /** Called right before each tool runs, for visibility into what the model is doing. */
   onToolCall?: OnToolCall
+  /** Called right before each model call, so a UI can start a fresh
+   * reasoning block for it. */
+  onStep?: () => void
+  /** The model's reasoning as it streams in (see CompletionRequest). */
+  onReasoning?: (delta: string) => void
   /** Unset: loop until the model stops calling tools. Set: after that many
    * model calls, append `budgetExhaustedNotice` and make one last call with
    * tool use forbidden, so the model writes up what it has instead of nothing. */
@@ -348,11 +396,12 @@ export interface ToolLoopOptions {
  * again. Returns the model's final text.
  */
 export async function runToolLoop(options: ToolLoopOptions): Promise<string> {
-  const { llm, system, messages, tools, dispatch, onToolCall, maxRounds, signal } = options
+  const { llm, system, messages, tools, dispatch, onToolCall, onStep, onReasoning, maxRounds, signal } = options
 
   for (let round = 0; maxRounds === undefined || round < maxRounds; round++) {
     signal?.throwIfAborted()
-    const reply = await llm.complete({ system, messages, tools, signal })
+    onStep?.()
+    const reply = await llm.complete({ system, messages, tools, onReasoning, signal })
     messages.push(reply)
     if (!reply.toolCalls.length) return reply.text
 
@@ -367,7 +416,8 @@ export async function runToolLoop(options: ToolLoopOptions): Promise<string> {
 
   messages.push({ role: 'user', text: options.budgetExhaustedNotice ?? 'Answer now with what you have.' })
   signal?.throwIfAborted()
-  const final = await llm.complete({ system, messages, tools, forbidToolUse: true, signal })
+  onStep?.()
+  const final = await llm.complete({ system, messages, tools, forbidToolUse: true, onReasoning, signal })
   messages.push(final)
   return final.text
 }
