@@ -9,6 +9,7 @@ import { SettingsPanel } from './components/SettingsPanel'
 import { StockDetail } from './components/StockDetail'
 import { fmtTime } from './format'
 import { useBridge } from './useBridge'
+import { useVoiceSetup } from './voice/useVoiceSetup'
 
 const REFRESH_MS = 60_000
 
@@ -60,6 +61,7 @@ export default function App() {
   const [chatStarted, setChatStarted] = useState(false)
   const [chatWidth, setChatWidth] = useState(loadChatWidth)
   const bridge = useBridge(chatStarted)
+  const voice = useVoiceSetup(chatStarted)
   // The latest chart point clicked, for the chat input; `n` makes a repeat
   // click on the same point a new request.
   const [reference, setReference] = useState<{ n: number; context: ViewContext } | null>(null)
@@ -249,6 +251,7 @@ export default function App() {
             />
             <ChatPanel
               bridge={bridge}
+              voice={voice}
               onClose={() => setChatOpen(false)}
               onOpenConsiderations={() => setShowConsiderations(true)}
               onOpenSettings={() => setShowSettings(true)}
@@ -268,6 +271,7 @@ export default function App() {
       )}
       {showSettings && (
         <SettingsPanel
+          voice={voice}
           onClose={() => setShowSettings(false)}
           onSaved={() => {
             refreshStatus()

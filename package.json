@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "cli": "bun src/cli/index.ts",
-    "build:cli": "bun build src/cli/index.ts --compile --minify --outfile dist/stox && rm -f .*.bun-build"
+    "build:cli": "bun build src/cli/index.ts --compile --minify --outfile dist/stox && rm -f .*.bun-build",
+    "fetch:whisper": "scripts/fetch-whisper.sh"
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",
@@ -45,7 +46,16 @@
     "mac": {
       "category": "public.app-category.finance",
       "identity": null,
-      "target": "dir"
-    }
+      "target": "dir",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Stox uses the microphone for voice dictation in the research chat. Audio is transcribed on this Mac and never leaves it."
+      }
+    },
+    "extraResources": [
+      {
+        "from": "build/bin/whisper-server",
+        "to": "bin/whisper-server"
+      }
+    ]
   }
 }

@@ -2,9 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ConversationSummary, ViewContext } from '../../../shared/types'
 import { isComposing } from '../keys'
 import type { useBridge } from '../useBridge'
+import { useDictation } from '../voice/useDictation'
+import { SERVER_LABELS, ServerDot } from '../voice/ServerDot'
+import type { VoiceSetup } from '../voice/useVoiceSetup'
+import { EnterIcon, WaveIcon } from './InputIcons'
 import { TranscriptRow } from './TranscriptRow'
 
 type Bridge = ReturnType<typeof useBridge>
+
+/** How long Space must be held to start dictating. */
+const SPACE_HOLD_MS = 500
 
 /** "5m ago", "3h ago", "2d ago", else the date. */
 function ago(iso: string): string {
@@ -104,12 +111,14 @@ function routeInput(
  * driven by the main process's ChatSession (src/core/session.ts). */
 export function ChatPanel({
   bridge,
+  voice,
   onClose,
   onOpenConsiderations,
   onOpenSettings,
   reference
 }: {
   bridge: Bridge
+  voice: VoiceSetup
   onClose: () => void
   onOpenConsiderations: () => void
   onOpenSettings: () => void
@@ -154,8 +163,50 @@ export function ChatPanel({
     }
   }, [reference?.n]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Voice dictation. While it runs the textarea shows `base` + the words so
+  // far (and is read-only); cancelling puts `base` back.
+  const dictationBase = useRef('')
+  const dictation = useDictation(setDraft, (cancelled) => {
+    if (cancelled) setDraft(dictationBase.current)
+    const input = inputRef.current
+    if (input) {
+      input.focus()
+      requestAnimationFrame(() => input.setSelectionRange(input.value.length, input.value.length))
+    }
+  })
+  const dictating = dictation.state !== 'idle'
+  const settingUp = voice.phase !== 'idle'
+  const startDictation = (base = draft): void => {
+    dictationBase.current = base
+    void dictation.start(base)
+  }
+  // The mic button: dictate when voice is ready. Setting it up (downloading
+  // the model) happens in Settings; a stopped engine is simply started.
+  const onMicClick = (): void => {
+    if (dictating) return void dictation.stop()
+    if (settingUp || !voice.status?.available) return
+    if (!voice.status.modelReady) onOpenSettings()
+    else if (voice.status.server === 'stopped') void voice.prepare(true)
+    else if (voice.ready) startDictation()
+  }
+
+  // Hold Space to talk, release to stop -- with or without text in the box.
+  // A tap must still type its space, so the first Space goes in as usual; if
+  // it is still down after SPACE_HOLD_MS the hold begins, that space is taken
+  // back out, and any other key pressed meanwhile means it was typing.
+  const spaceTimer = useRef<number | null>(null)
+  const spaceHeld = useRef(false)
+  const releaseSpace = (): void => {
+    if (spaceTimer.current !== null) window.clearTimeout(spaceTimer.current)
+    spaceTimer.current = null
+    if (spaceHeld.current) {
+      spaceHeld.current = false
+      void dictation.stop()
+    }
+  }
+
   const submit = (): void => {
-    if (isBusy) return
+    if (isBusy || dictating) return
     routeInput(draft, bridge, openHistory, references.current)
     references.current.clear()
     setDraft('')
@@ -236,6 +287,13 @@ export function ChatPanel({
         {isBusy && !reasoningLive && <div className="chip chip-dim">thinking…</div>}
       </div>
 
+      {(voice.error || dictation.error) && (
+        <div className="banner">
+          <span>{voice.error ?? dictation.error}</span>
+          {voice.error && <button onClick={onOpenSettings}>Settings</button>}
+        </div>
+      )}
+
       <form
         className="input-bar"
         onSubmit={(e) => {
@@ -247,18 +305,68 @@ export function ChatPanel({
           ref={inputRef}
           value={draft}
           disabled={isBusy}
+          readOnly={dictating}
           rows={2}
-          placeholder="Ask a question…"
+          placeholder={dictating ? 'Listening…' : 'Ask a question…'}
           onChange={(e) => setDraft(e.target.value)}
+          onBlur={releaseSpace}
+          onKeyUp={(e) => {
+            if (e.code === 'Space') releaseSpace()
+          }}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey && !isComposing(e)) {
+            if (isComposing(e)) return
+            if (e.code !== 'Space' && spaceTimer.current !== null) {
+              window.clearTimeout(spaceTimer.current)
+              spaceTimer.current = null
+            }
+            if (e.key === 'Escape' && dictating) {
+              e.preventDefault()
+              spaceHeld.current = false
+              dictation.cancel()
+            } else if (e.code === 'Space' && !dictating && voice.ready && !isBusy && !e.metaKey && !e.ctrlKey && !e.altKey) {
+              if (e.repeat) {
+                e.preventDefault() // a held Space types nothing more
+              } else if (spaceTimer.current === null) {
+                const before = draft
+                spaceTimer.current = window.setTimeout(() => {
+                  spaceTimer.current = null
+                  spaceHeld.current = true
+                  setDraft(before) // take the first space back out
+                  startDictation(before)
+                }, SPACE_HOLD_MS)
+              }
+            } else if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault()
               submit()
             }
           }}
         />
-        <button type="submit" disabled={isBusy}>
-          {isBusy ? '…' : 'Send'}
+        <button
+          type="button"
+          className={`mic-button${dictation.state === 'listening' ? ' listening' : ''}`}
+          disabled={isBusy || !voice.status?.available || settingUp || dictation.state === 'finishing'}
+          aria-pressed={dictation.state === 'listening'}
+          aria-label={dictating ? 'Stop dictation' : 'Dictate'}
+          title={
+            !voice.status?.available
+              ? 'Voice input is unavailable in this build'
+              : settingUp
+                ? 'Getting voice input ready…'
+                : dictating
+                  ? 'Stop (or release Space)'
+                  : !voice.status.modelReady
+                    ? 'Set up voice input in Settings'
+                    : voice.ready
+                      ? 'Dictate (or hold Space)'
+                      : `Speech engine ${SERVER_LABELS[voice.status.server].toLowerCase()}; click to start it`
+          }
+          onClick={onMicClick}
+        >
+          {dictation.state === 'starting' || settingUp ? '…' : <WaveIcon live={dictation.state === 'listening'} />}
+          {voice.status?.available && !dictating && <ServerDot state={voice.status.server} />}
+        </button>
+        <button type="submit" className="primary send-button" disabled={isBusy} title="Send (Enter)" aria-label="Send">
+          {isBusy ? '…' : <EnterIcon />}
         </button>
       </form>
     </aside>
