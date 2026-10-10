@@ -10,6 +10,7 @@ import type {
   SymbolMatch,
   Theme,
   VoiceEvent,
+  VoiceLanguage,
   VoiceStatus,
   WatchlistEntry
 } from '../shared/types'
@@ -48,6 +49,7 @@ const stoxApi: StoxApi = {
   voicePush(samples: Int16Array): void {
     ipcRenderer.send('voice:push', samples)
   },
+  setVoiceLanguage: (language: VoiceLanguage) => invoke<void>('voice:set-language', language),
   voiceStopServer: () => invoke<void>('voice:stop-server'),
   voiceStop: () => invoke<void>('voice:stop'),
   voiceCancel(): void {

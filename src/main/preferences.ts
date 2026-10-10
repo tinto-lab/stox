@@ -2,10 +2,10 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { nativeTheme } from 'electron'
-import { THEMES, type Theme } from '../shared/types'
+import { THEMES, VOICE_LANGUAGES, type Theme, type VoiceLanguage } from '../shared/types'
 
 /**
- * App-only preferences (currently just the light/dark choice), persisted in
+ * App-only preferences (the light/dark choice and the dictation language), persisted in
  * ~/.config/stox/ alongside the watchlist and .env. Unlike .env these are
  * never read by the terminal CLI.
  */
@@ -13,15 +13,20 @@ const PREFERENCES_PATH = path.join(os.homedir(), '.config', 'stox', 'preferences
 
 interface Preferences {
   theme: Theme
+  voiceLanguage: VoiceLanguage
 }
+
+const DEFAULTS: Preferences = { theme: 'system', voiceLanguage: 'auto' }
 
 function readPreferences(): Preferences {
   try {
-    const parsed = JSON.parse(fs.readFileSync(PREFERENCES_PATH, 'utf8')) as { theme?: unknown }
-    const theme = THEMES.find((t) => t === parsed.theme) ?? 'system'
-    return { theme }
+    const parsed = JSON.parse(fs.readFileSync(PREFERENCES_PATH, 'utf8')) as { theme?: unknown; voiceLanguage?: unknown }
+    return {
+      theme: THEMES.find((t) => t === parsed.theme) ?? DEFAULTS.theme,
+      voiceLanguage: VOICE_LANGUAGES.find((l) => l.code === parsed.voiceLanguage)?.code ?? DEFAULTS.voiceLanguage
+    }
   } catch {
-    return { theme: 'system' } // no file yet, or unreadable -- fall back to defaults
+    return DEFAULTS // no file yet, or unreadable -- fall back to defaults
   }
 }
 
@@ -48,4 +53,13 @@ export function setTheme(theme: Theme): void {
   if (!THEMES.includes(theme)) throw new Error(`unknown theme: ${theme}`)
   applyTheme(theme)
   writePreferences({ ...readPreferences(), theme })
+}
+
+export function getVoiceLanguage(): VoiceLanguage {
+  return readPreferences().voiceLanguage
+}
+
+export function setVoiceLanguage(voiceLanguage: VoiceLanguage): void {
+  if (!VOICE_LANGUAGES.some((l) => l.code === voiceLanguage)) throw new Error(`unknown language: ${voiceLanguage}`)
+  writePreferences({ ...readPreferences(), voiceLanguage })
 }

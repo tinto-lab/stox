@@ -1,4 +1,4 @@
-import { SAMPLE_RATE, encodeWav, rms } from '../shared/audio'
+import { SAMPLE_RATE, SpeechDetector, encodeWav } from '../shared/audio'
 import type { VoiceEvent } from '../shared/types'
 
 /** Turns WAV audio into text (whisper.cpp's server in the app, a fake in tests). */
@@ -14,8 +14,6 @@ export const SILENCE_COMMIT_MS = 700
 export const MAX_UTTERANCE_MS = 15_000
 /** Audio kept across a cut so the next utterance doesn't lose its first word. */
 const OVERLAP_MS = 200
-/** Below this RMS a chunk counts as silence. */
-const SPEECH_RMS = 0.012
 
 const ms = (samples: number): number => (samples / SAMPLE_RATE) * 1000
 
@@ -42,6 +40,7 @@ export interface VoiceSession {
  * `commit`, and the buffer starts over.
  */
 export function createVoiceSession(transcriber: Transcriber, emit: (event: VoiceEvent) => void): VoiceSession {
+  const detector = new SpeechDetector()
   let chunks: Int16Array[] = []
   let bufferedSamples = 0
   let hasSpeech = false
@@ -116,7 +115,7 @@ export function createVoiceSession(transcriber: Transcriber, emit: (event: Voice
       chunks.push(samples)
       bufferedSamples += samples.length
       dirty = true
-      if (rms(samples) >= SPEECH_RMS) {
+      if (detector.update(samples)) {
         hasSpeech = true
         silenceMs = 0
       } else {

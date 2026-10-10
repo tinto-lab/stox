@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { THEMES, type Theme } from '../../../shared/types'
+import { THEMES, VOICE_LANGUAGES, type Theme, type VoiceLanguage } from '../../../shared/types'
 import { SERVER_LABELS, ServerDot } from '../voice/ServerDot'
 import type { VoiceSetup } from '../voice/useVoiceSetup'
 
@@ -63,6 +63,23 @@ function VoiceSection({ voice }: { voice: VoiceSetup }) {
               )}
             </span>
           </div>
+          <label className="voice-row">
+            <span>Spoken language</span>
+            <select
+              value={status.language}
+              onChange={(e) => void voice.setLanguage(e.target.value as VoiceLanguage)}
+            >
+              {VOICE_LANGUAGES.map((l) => (
+                <option key={l.code} value={l.code}>
+                  {l.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="panel-sheet-hint">
+            Pin the language you dictate in: auto-detection can guess wrong on a short phrase. Applies
+            from the next phrase.
+          </p>
           <p className="panel-sheet-hint">
             The engine starts when you open the chat and stops after 10 minutes without dictation.
           </p>

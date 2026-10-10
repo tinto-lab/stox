@@ -53,3 +53,62 @@ export function encodeWav(samples: Int16Array, sampleRate = SAMPLE_RATE): Uint8A
   for (let i = 0; i < samples.length; i++) view.setInt16(44 + i * 2, samples[i], true)
   return out
 }
+
+/** Speech must exceed the background level by this factor to start... */
+const ON_RATIO = 3
+/** ...and falls back below this factor to count as silence again. */
+const OFF_RATIO = 2
+/** Never call anything quieter than this (about -50 dBFS) speech, even in a dead-quiet room. */
+const MIN_SPEECH_LEVEL = 0.003
+/** The background estimate is capped, so a recording that opens mid-word
+ * can't set a floor above the speech itself. */
+const MAX_NOISE = 0.01
+const MIN_NOISE = 0.0005
+/** First-order high-pass cutoff, to ignore rumble, hum and DC offset. */
+const HIGH_PASS_HZ = 100
+
+/**
+ * Tells speech from background noise by comparing each chunk's level with
+ * the room's own noise floor, so a noisy room doesn't read as speech forever
+ * and a quiet speaker is still heard (a fixed volume threshold gets one of
+ * the two wrong). The floor falls to any quieter level at once and creeps
+ * up only during silence. Hysteresis keeps a word's quiet tail from
+ * flickering. Feed it consecutive chunks of one recording.
+ */
+export class SpeechDetector {
+  private noise: number | null = null
+  private speaking = false
+  private prevIn = 0
+  private prevOut = 0
+  private readonly alpha: number
+
+  constructor(sampleRate = SAMPLE_RATE) {
+    const rc = 1 / (2 * Math.PI * HIGH_PASS_HZ)
+    this.alpha = rc / (rc + 1 / sampleRate)
+  }
+
+  /** The chunk's level after the high-pass filter, 0..1. */
+  private level(samples: Int16Array): number {
+    let sum = 0
+    for (const s of samples) {
+      const x = s / 0x8000
+      this.prevOut = this.alpha * (this.prevOut + x - this.prevIn)
+      this.prevIn = x
+      sum += this.prevOut * this.prevOut
+    }
+    return samples.length ? Math.sqrt(sum / samples.length) : 0
+  }
+
+  /** Whether this chunk is speech. */
+  update(samples: Int16Array): boolean {
+    const level = this.level(samples)
+    if (this.noise === null) this.noise = Math.min(Math.max(level, MIN_NOISE), MAX_NOISE)
+    const ratio = this.speaking ? OFF_RATIO : ON_RATIO
+    this.speaking = level > Math.max(MIN_SPEECH_LEVEL, this.noise * ratio)
+    if (!this.speaking) {
+      // Quieter: follow it down at once. Louder: drift up, slowly.
+      this.noise = level < this.noise ? Math.max(level, MIN_NOISE) : Math.min(this.noise + (level - this.noise) * 0.05, MAX_NOISE)
+    }
+    return this.speaking
+  }
+}

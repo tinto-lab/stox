@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { VoiceStatus } from '../../../shared/types'
+import type { VoiceLanguage, VoiceStatus } from '../../../shared/types'
 
 export type SetupPhase = 'idle' | 'downloading' | 'starting'
 
@@ -64,6 +64,18 @@ export function useVoiceSetup(autoStart: boolean) {
     }
   }, [])
 
+  const setLanguage = useCallback(
+    async (language: VoiceLanguage) => {
+      try {
+        await window.stox.setVoiceLanguage(language)
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+      }
+      await refresh()
+    },
+    [refresh]
+  )
+
   const canAutoStart = !!status?.available && status.modelReady && status.server === 'stopped'
   const autoTried = useRef(false)
   useEffect(() => {
@@ -80,7 +92,8 @@ export function useVoiceSetup(autoStart: boolean) {
     error,
     ready: !!status?.available && status.modelReady && status.server === 'running',
     prepare,
-    stopServer
+    stopServer,
+    setLanguage
   }
 }
 

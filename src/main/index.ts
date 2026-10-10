@@ -6,8 +6,8 @@ import { ChatSession } from '../core/session'
 import { createVoiceSession, type VoiceSession } from '../core/voiceSession'
 import { WhisperServer, ensureModel, modelReady } from '../core/whisper'
 import type { BridgeCommand } from '../shared/bridgeProtocol'
-import type { IpcResult, Theme, VoiceEvent, VoiceStatus, WatchlistEntry } from '../shared/types'
-import { applyTheme, getTheme, setTheme } from './preferences'
+import type { IpcResult, Theme, VoiceEvent, VoiceLanguage, VoiceStatus, WatchlistEntry } from '../shared/types'
+import { applyTheme, getTheme, getVoiceLanguage, setTheme, setVoiceLanguage } from './preferences'
 import { readWatchlist, writeWatchlist } from './watchlist'
 
 let mainWindow: BrowserWindow | null = null
@@ -55,6 +55,7 @@ const whisper = new WhisperServer(
     : path.resolve(__dirname, '..', '..', 'build', 'bin', 'whisper-server'),
   (state) => sendVoice({ type: 'server', state })
 )
+whisper.language = getVoiceLanguage()
 let voice: VoiceSession | null = null
 
 function createWindow(): void {
@@ -125,7 +126,8 @@ handle('settings:save', (values: Record<string, string>) => {
 handle('voice:status', (): VoiceStatus => ({
   available: whisper.available(),
   modelReady: modelReady(),
-  server: whisper.currentState()
+  server: whisper.currentState(),
+  language: getVoiceLanguage()
 }))
 let preparing: Promise<void> | null = null
 handle('voice:prepare', () => {
@@ -160,6 +162,10 @@ handle('voice:stop-server', () => {
   voice?.cancel()
   voice = null
   whisper.stop()
+})
+handle('voice:set-language', (language: VoiceLanguage) => {
+  setVoiceLanguage(language)
+  whisper.language = language // applies from the next request
 })
 handle('voice:cancel', () => {
   voice?.cancel()

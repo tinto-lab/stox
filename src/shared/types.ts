@@ -210,6 +210,22 @@ export type Theme = (typeof THEMES)[number]
 /** What a dictation session reports while the user speaks. `partial` is the
  * tentative text of the utterance in progress (each one replaces the last);
  * `commit` is that utterance's final text; `done` ends the session. */
+/** Languages dictation can be pinned to; 'auto' lets whisper detect it. */
+export const VOICE_LANGUAGES = [
+  { code: 'auto', label: 'Auto-detect' },
+  { code: 'en', label: 'English' },
+  { code: 'zh', label: 'Chinese (中文)' },
+  { code: 'ja', label: 'Japanese (日本語)' },
+  { code: 'ko', label: 'Korean (한국어)' },
+  { code: 'es', label: 'Spanish (Español)' },
+  { code: 'fr', label: 'French (Français)' },
+  { code: 'de', label: 'German (Deutsch)' },
+  { code: 'pt', label: 'Portuguese (Português)' },
+  { code: 'it', label: 'Italian (Italiano)' },
+  { code: 'ru', label: 'Russian (Русский)' }
+] as const
+export type VoiceLanguage = (typeof VOICE_LANGUAGES)[number]['code']
+
 export type ServerState = 'stopped' | 'starting' | 'running'
 
 export type VoiceEvent =
@@ -227,6 +243,8 @@ export interface VoiceStatus {
   modelReady: boolean
   /** Whether the whisper server is up; dictation can start only when it is. */
   server: ServerState
+  /** The language dictation is pinned to ('auto' = detect it). */
+  language: VoiceLanguage
 }
 
 /** The `window.stox` API the preload script exposes to the renderer. */
@@ -259,6 +277,7 @@ export interface StoxApi {
   voiceStop(): Promise<void>
   /** Shuts the whisper server down (it starts again on demand). */
   voiceStopServer(): Promise<void>
+  setVoiceLanguage(language: VoiceLanguage): Promise<void>
   voiceCancel(): void
   onVoiceEvent(listener: (event: VoiceEvent) => void): () => void
 }

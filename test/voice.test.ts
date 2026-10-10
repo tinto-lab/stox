@@ -1,11 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs'
-import { SAMPLE_RATE, encodeWav, resampleTo16k, rms } from '../src/shared/audio'
+import { SAMPLE_RATE, SpeechDetector, encodeWav, resampleTo16k, rms } from '../src/shared/audio'
 import { MAX_UTTERANCE_MS, PARTIAL_INTERVAL_MS, SILENCE_COMMIT_MS, createVoiceSession } from '../src/core/voiceSession'
 import { ensureModel, modelPath } from '../src/core/whisper'
 import type { VoiceEvent } from '../src/shared/types'
 
-const loud = (ms: number): Int16Array => new Int16Array((SAMPLE_RATE * ms) / 1000).fill(8000)
+/** Samples of a 440 Hz tone (a stand-in for speech: a steady offset would be filtered out as rumble). */
+const tone = (ms: number, amplitude: number): Int16Array =>
+  Int16Array.from({ length: (SAMPLE_RATE * ms) / 1000 }, (_, i) => Math.sin((2 * Math.PI * 440 * i) / SAMPLE_RATE) * amplitude)
+const loud = (ms: number): Int16Array => tone(ms, 8000)
+/** Deterministic hiss at roughly the given RMS level (0..1). */
+function hiss(ms: number, level: number, seed = 1): Int16Array {
+  let x = seed
+  return Int16Array.from({ length: (SAMPLE_RATE * ms) / 1000 }, () => {
+    x = (x * 1664525 + 1013904223) % 4294967296
+    return (x / 4294967296 - 0.5) * 2 * Math.sqrt(3) * level * 0x8000
+  })
+}
 const quiet = (ms: number): Int16Array => new Int16Array((SAMPLE_RATE * ms) / 1000)
 
 describe('audio helpers', () => {
@@ -29,6 +40,46 @@ describe('audio helpers', () => {
   it('measures level', () => {
     expect(rms(quiet(100))).toBe(0)
     expect(rms(loud(100))).toBeGreaterThan(0.1)
+  })
+})
+
+describe('speech detector', () => {
+  /** Runs the detector over 100 ms chunks, returning how many were called speech. */
+  const speechChunks = (d: SpeechDetector, audio: Int16Array): number => {
+    let n = 0
+    for (let i = 0; i < audio.length; i += 1600) if (d.update(audio.slice(i, i + 1600))) n++
+    return n
+  }
+  const mix = (a: Int16Array, b: Int16Array): Int16Array => a.map((v, i) => v + b[i])
+
+  it('hears a quiet voice in a quiet room', () => {
+    const d = new SpeechDetector()
+    expect(speechChunks(d, hiss(1000, 0.001))).toBe(0)
+    // 0.008 RMS tone: below the old fixed 0.012 threshold.
+    expect(speechChunks(d, mix(tone(1000, 0.008 * Math.SQRT2 * 0x8000), hiss(1000, 0.001, 2)))).toBeGreaterThanOrEqual(9)
+  })
+
+  it('does not take steady background noise for speech', () => {
+    const d = new SpeechDetector()
+    // 0.02 RMS hiss is above the old fixed threshold, so it would be "speech" all along.
+    expect(speechChunks(d, hiss(3000, 0.02))).toBe(0)
+  })
+
+  it('hears speech over background noise, and the pause after it', () => {
+    const d = new SpeechDetector()
+    speechChunks(d, hiss(1000, 0.01))
+    expect(speechChunks(d, mix(tone(1000, 6000), hiss(1000, 0.01, 3)))).toBeGreaterThanOrEqual(9)
+    expect(speechChunks(d, hiss(1000, 0.01, 4))).toBe(0)
+  })
+
+  it('ignores a constant offset and low rumble', () => {
+    expect(speechChunks(new SpeechDetector(), new Int16Array(SAMPLE_RATE).fill(6000))).toBe(0)
+    expect(speechChunks(new SpeechDetector(), tone(1000, 1500).map((_, i) => Math.sin((2 * Math.PI * 30 * i) / SAMPLE_RATE) * 1500))).toBe(0)
+  })
+
+  it('still hears speech when the recording starts mid-word', () => {
+    const d = new SpeechDetector()
+    expect(speechChunks(d, tone(1000, 4000))).toBeGreaterThanOrEqual(9)
   })
 })
 

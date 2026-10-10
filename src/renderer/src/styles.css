@@ -1318,3 +1318,12 @@ tr.missing {
   height: 7px;
   box-shadow: 0 0 0 1.5px var(--bg);
 }
+
+.voice-row select {
+  font: inherit;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  color: var(--fg);
+}

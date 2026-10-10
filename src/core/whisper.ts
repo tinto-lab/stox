@@ -73,6 +73,8 @@ export class WhisperServer implements Transcriber {
   private starting: Promise<string> | null = null
   private idleTimer: NodeJS.Timeout | null = null
   private model = ''
+  /** Sent with every request; 'auto' lets whisper detect it. */
+  language = 'auto'
   private state: ServerState = 'stopped'
 
   constructor(
@@ -159,6 +161,7 @@ export class WhisperServer implements Transcriber {
     form.set('file', new Blob([Buffer.from(wav)], { type: 'audio/wav' }), 'audio.wav')
     form.set('response_format', 'json')
     form.set('temperature', '0')
+    form.set('language', this.language)
     const res = await fetch(`${base}/inference`, { method: 'POST', body: form, signal: AbortSignal.timeout(30_000) })
     if (!res.ok) throw new Error(`Transcription failed (HTTP ${res.status})`)
     const body = (await res.json()) as { text?: string; error?: string }
