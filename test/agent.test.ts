@@ -83,11 +83,11 @@ describe('askAgent', () => {
     expect(announced).toEqual(turn.map((c) => c.name))
     expect(result).toMatchObject({
       text: 'Here you go.',
-      quotes: [quote()],
-      articles: [article()],
-      geoArticles: [geoArticle()],
-      bars: [bar()],
-      fundamentals: fundamentals()
+      quotes: [],
+      articles: [],
+      geoArticles: [],
+      bars: [],
+      fundamentals: null
     })
     expect(data.fetchNews).toHaveBeenCalledWith(['AAPL'], 3)
     expect(data.fetchBars).toHaveBeenCalledWith('AAPL', 7)
@@ -127,8 +127,6 @@ describe('askAgent', () => {
       'trend:get_price_history'
     ])
     expect(result.analysis).toMatchObject({ ticker: 'NVDA', trendText: 'get_price_history done', verdictText: 'Buy.' })
-    expect(result.fundamentals?.code).toBe('NVDA.US')
-    expect(result.articles).toEqual([article()])
     const toolResult = scripted.requestsOf('main').at(-1)!.messages.find((m) => m.role === 'tool') as { content: string }
     expect(toolResult.content).toContain('risk_assessment: Buy.')
   })

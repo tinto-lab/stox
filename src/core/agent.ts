@@ -161,30 +161,25 @@ export async function askAgent(
   const dispatch: Dispatch = async (name, args) => {
     switch (name) {
       case 'get_stock_quote': {
-        const [text, quotes] = await runQuoteTool(argStrings(args, 'tickers'))
-        if (quotes.length) result.quotes = quotes
+        const [text] = await runQuoteTool(argStrings(args, 'tickers'))
         return text
       }
       case 'get_stock_news': {
         const [text, articles] = await runNewsTool(argStrings(args, 'tickers'), argNumber(args, 'limit', 5))
-        if (articles.length) result.articles = articles
         for (const a of articles) if (a.link) knownUrls.add(a.link)
         return text
       }
       case 'get_geopolitical_news': {
         const [text, articles] = await runGeoNewsTool(argString(args, 'query'), argNumber(args, 'limit', 5))
-        if (articles.length) result.geoArticles = articles
         for (const a of articles) if (a.link) knownUrls.add(a.link)
         return text
       }
       case 'get_price_history': {
-        const [text, bars] = await runHistoryTool(argString(args, 'ticker'), argNumber(args, 'days', 30))
-        if (bars.length) result.bars = bars
+        const [text] = await runHistoryTool(argString(args, 'ticker'), argNumber(args, 'days', 30))
         return text
       }
       case 'get_company_fundamentals': {
-        const [text, fundamentals] = await runFundamentalsTool(argString(args, 'ticker'))
-        result.fundamentals = fundamentals ?? result.fundamentals
+        const [text] = await runFundamentalsTool(argString(args, 'ticker'))
         return text
       }
       case 'analyze_stock': {
@@ -202,11 +197,6 @@ export async function askAgent(
           return `error: analysis error: ${e instanceof Error ? e.message : String(e)}`
         }
         result.analysis = analysis
-        if (analysis.quotes.length) result.quotes = analysis.quotes
-        if (analysis.bars.length) result.bars = analysis.bars
-        if (analysis.articles.length) result.articles = analysis.articles
-        if (analysis.geoArticles.length) result.geoArticles = analysis.geoArticles
-        result.fundamentals = analysis.fundamentals ?? result.fundamentals
         for (const a of [...analysis.articles, ...analysis.geoArticles]) if (a.link) knownUrls.add(a.link)
         return formatAnalysisForAgent(analysis)
       }

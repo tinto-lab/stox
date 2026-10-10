@@ -49,7 +49,7 @@ describe('ChatSession', () => {
     await settle()
     expect(events.map((e) => e.type)).toEqual(['tool_call', 'result'])
     expect(events[0]).toEqual({ id: 'a1', type: 'tool_call', name: 'get_stock_quote', args: { tickers: ['AAPL'] } })
-    expect(events[1]).toMatchObject({ id: 'a1', data: { text: 'AAPL is up.', quotes: [quote()] } })
+    expect(events[1]).toMatchObject({ id: 'a1', data: { text: 'AAPL is up.', quotes: [] } })
   })
 
   it('reports a missing provider key as an error for that request', async () => {
