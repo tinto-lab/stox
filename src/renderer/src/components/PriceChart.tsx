@@ -26,7 +26,16 @@ function dateLabel(iso: string, range: HistoryRange): string {
 /** Single-series close-price line with a hover crosshair + tooltip. Colored
  * by the period's direction; the title/range tabs above it name the series,
  * so there's no legend. */
-export function PriceChart({ bars, range }: { bars: Bar[]; range: HistoryRange }) {
+export function PriceChart({
+  bars,
+  range,
+  onPick
+}: {
+  bars: Bar[]
+  range: HistoryRange
+  /** Clicking a point reports the index of the bar under the cursor. */
+  onPick?: (index: number) => void
+}) {
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const [width, setWidth] = useState(600)
   const [hover, setHover] = useState<number | null>(null)
@@ -70,11 +79,12 @@ export function PriceChart({ bars, range }: { bars: Bar[]; range: HistoryRange }
   const labelCount = Math.max(2, Math.min(6, Math.floor(plotW / 110)))
   const xLabels = Array.from({ length: labelCount }, (_, k) => Math.round((k / (labelCount - 1)) * (bars.length - 1)))
 
-  const onMove = (e: React.MouseEvent<SVGRectElement>): void => {
+  const indexAt = (e: React.MouseEvent<SVGRectElement>): number => {
     const rect = e.currentTarget.getBoundingClientRect()
     const ratio = (e.clientX - rect.left) / rect.width
-    setHover(Math.max(0, Math.min(bars.length - 1, Math.round(ratio * (bars.length - 1)))))
+    return Math.max(0, Math.min(bars.length - 1, Math.round(ratio * (bars.length - 1))))
   }
+  const onMove = (e: React.MouseEvent<SVGRectElement>): void => setHover(indexAt(e))
 
   const hovered = hover !== null ? bars[hover] : null
   const hoveredChange = hovered ? (hovered.close / closes[0] - 1) * 100 : 0
@@ -134,7 +144,9 @@ export function PriceChart({ bars, range }: { bars: Bar[]; range: HistoryRange }
           width={plotW}
           height={plotH}
           fill="transparent"
+          style={onPick ? { cursor: 'pointer' } : undefined}
           onMouseMove={onMove}
+          onClick={onPick && ((e) => onPick(indexAt(e)))}
           onMouseLeave={() => setHover(null)}
         />
       </svg>

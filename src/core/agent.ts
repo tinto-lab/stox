@@ -1,4 +1,4 @@
-import type { AgentResult, AnalysisResult } from '../shared/types'
+import type { AgentResult, AnalysisResult, ViewContext } from '../shared/types'
 import { ANALYZE_STOCK_SPEC, type AnalysisCallbacks, formatAnalysisForAgent, runStockAnalysis } from './analysis'
 import { addConsideration, loadConsiderations } from './considerations'
 import { type ChatMessage, type ChatModel, type Dispatch, type OnToolCall, type ToolSpec, runToolLoop } from './llm'
@@ -33,7 +33,9 @@ export const AGENT_SYSTEM =
   "target or range with a time horizon, grounded in the analysis. Don't refuse or dodge these questions " +
   "and don't lecture about not giving financial advice -- the app already shows a disclaimer. " +
   "Answer in one or two short sentences -- a detailed panel of the tool data is " +
-  "printed right after your answer, so don't restate it."
+  "printed right after your answer, so don't restate it. A bracketed reference like [TICKER on DATE] " +
+  'in the user\'s message is a chart point they clicked; its data is appended after their message. ' +
+  'Never guess the numbers of a reference whose data isn\'t there.'
 
 /** AGENT_SYSTEM plus the standing considerations, read fresh each turn so
  * one remembered mid-session applies to this session's later turns too. */
@@ -117,7 +119,29 @@ export function articleUrlsIn(messages: ChatMessage[]): Set<string> {
   return urls
 }
 
+/** The data behind the chart-point references in a message, appended after
+ * the user's text so `[AAPL on 2026-09-12]` means something to the model. */
+export function formatViewContexts(contexts: ViewContext[]): string {
+  const pct = (v: number): string => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`
+  return contexts
+    .map(({ token, code, range, bar, prevClose, rangeStartClose }) => {
+      const parts = [
+        `open ${bar.open}`,
+        `high ${bar.high}`,
+        `low ${bar.low}`,
+        `close ${bar.close}`,
+        `volume ${bar.volume}`
+      ]
+      if (prevClose) parts.push(`${pct((bar.close / prevClose - 1) * 100)} vs previous close`)
+      parts.push(`${pct((bar.close / rangeStartClose - 1) * 100)} since the start of the ${range} chart`)
+      return `${token} = ${code} daily bar ${bar.date}: ${parts.join(', ')}`
+    })
+    .join('\n')
+}
+
 export interface AskCallbacks {
+  /** Chart points referenced in the question; see formatViewContexts. */
+  contexts?: ViewContext[]
   /** Called right before each tool runs. */
   onToolCall?: OnToolCall
   /** Progress from the specialists when the model calls analyze_stock. */
@@ -215,7 +239,8 @@ export async function askAgent(
     }
   }
 
-  const messages: ChatMessage[] = [...history, { role: 'user', text: query }]
+  const text = callbacks.contexts?.length ? `${query}\n\n${formatViewContexts(callbacks.contexts)}` : query
+  const messages: ChatMessage[] = [...history, { role: 'user', text }]
   result.text = await runToolLoop({
     llm,
     system: systemPrompt(),

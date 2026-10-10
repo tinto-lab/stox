@@ -11,7 +11,8 @@ import type {
   GeoArticle,
   Quote,
   QuoteResult,
-  ResumedConversation
+  ResumedConversation,
+  ViewContext
 } from '../../shared/types'
 
 export type TranscriptItem =
@@ -225,12 +226,12 @@ export function useBridge(enabled: boolean) {
   }, [enabled, refreshConsiderations, refreshStatus])
 
   const ask = useCallback(
-    (text: string) => {
+    (text: string, contexts?: ViewContext[]) => {
       const id = makeId()
       pending.current.set(id, 'ask')
       setIsBusy(true)
       append({ kind: 'user_message', id, text })
-      window.stox.send({ id, cmd: 'ask', text })
+      window.stox.send({ id, cmd: 'ask', text, contexts })
     },
     [append]
   )

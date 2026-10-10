@@ -41,6 +41,20 @@ export interface Bar {
 
 export type HistoryRange = '1M' | '3M' | '6M' | '1Y' | '5Y'
 
+/** A chart point the user clicked, referenced in their chat message by
+ * `token` (e.g. `[AAPL on 2026-09-12]`). The agent expands it into the bar's
+ * numbers so the model knows what the token points at. */
+export interface ViewContext {
+  token: string
+  code: string
+  range: HistoryRange
+  bar: Bar
+  /** Close of the bar before this one; null for the first bar of the range. */
+  prevClose: number | null
+  /** First bar's close in the displayed range, for the change over the range. */
+  rangeStartClose: number
+}
+
 export interface Fundamentals {
   code: string
   yahooSymbol: string

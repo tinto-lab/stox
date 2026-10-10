@@ -93,6 +93,7 @@ export class ChatSession {
         const conversation = this.conversation
         const data = await askAgent(buildLLM(), command.text, conversation.history, {
           signal,
+          contexts: command.contexts,
           onToolCall: (name, args) => this.emit({ id, type: 'tool_call', name, args }),
           onAnalysisAgentStart: (name) => this.emit({ id, type: 'specialist_start', name }),
           onAnalysisToolCall: (agent, name, args) => this.emit({ id, type: 'specialist_tool_call', agent, name, args }),

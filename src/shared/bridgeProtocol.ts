@@ -8,8 +8,10 @@
  * events (tool_call, specialist_*, reasoning) before that.
  */
 
+import type { ViewContext } from './types'
+
 export type BridgeCommand =
-  | { id: string; cmd: 'ask'; text: string }
+  | { id: string; cmd: 'ask'; text: string; contexts?: ViewContext[] }
   | { id: string; cmd: 'quote'; tickers: string[] }
   | { id: string; cmd: 'analyze'; ticker: string }
   | { id: string; cmd: 'reset' }

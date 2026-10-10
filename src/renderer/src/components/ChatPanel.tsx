@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ConversationSummary } from '../../../shared/types'
+import type { ConversationSummary, ViewContext } from '../../../shared/types'
 import { isComposing } from '../keys'
 import type { useBridge } from '../useBridge'
 import { TranscriptRow } from './TranscriptRow'
@@ -62,7 +62,12 @@ function HistoryMenu({
  * slash-prefixed line is a command, everything else (including a bare
  * ticker) goes to the agent -- there's no local ticker-detection heuristic
  * on either side. */
-function routeInput(raw: string, bridge: Bridge, openHistory: () => void): void {
+function routeInput(
+  raw: string,
+  bridge: Bridge,
+  openHistory: () => void,
+  references: Map<string, ViewContext>
+): void {
   const text = raw.trim()
   if (!text) return
 
@@ -90,7 +95,9 @@ function routeInput(raw: string, bridge: Bridge, openHistory: () => void): void 
     return
   }
 
-  bridge.ask(text)
+  // Only references still in the text count: deleting a token drops its data.
+  const contexts = [...references.values()].filter((c) => text.includes(c.token))
+  bridge.ask(text, contexts.length ? contexts : undefined)
 }
 
 /** The research chat, as a side panel next to the dashboard/stock view,
@@ -99,12 +106,16 @@ export function ChatPanel({
   bridge,
   onClose,
   onOpenConsiderations,
-  onOpenSettings
+  onOpenSettings,
+  reference
 }: {
   bridge: Bridge
   onClose: () => void
   onOpenConsiderations: () => void
   onOpenSettings: () => void
+  /** A chart point to insert into the draft as a `[AAPL on 2026-09-12]` token;
+   * `n` changes on every click so a repeat of the same point is seen. */
+  reference: { n: number; context: ViewContext } | null
 }) {
   const { transcript, isBusy, status, reset, setThinking, conversations, listConversations, resume } = bridge
   const [draft, setDraft] = useState('')
@@ -127,9 +138,26 @@ export function ChatPanel({
     inputRef.current?.focus()
   }, [])
 
+  // Data behind the tokens in the draft, sent along with the message.
+  const references = useRef(new Map<string, ViewContext>())
+
+  useEffect(() => {
+    if (!reference) return
+    const { token } = reference.context
+    references.current.set(token, reference.context)
+    setDraft((d) => (d.includes(token) ? d : `${d}${d && !/\s$/.test(d) ? ' ' : ''}${token} `))
+    const input = inputRef.current
+    if (input) {
+      input.focus()
+      // After React commits the new value, so the caret lands past the token.
+      requestAnimationFrame(() => input.setSelectionRange(input.value.length, input.value.length))
+    }
+  }, [reference?.n]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const submit = (): void => {
     if (isBusy) return
-    routeInput(draft, bridge, openHistory)
+    routeInput(draft, bridge, openHistory, references.current)
+    references.current.clear()
     setDraft('')
   }
 

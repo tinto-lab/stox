@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { data } from './mocks'
-import { AGENT_SYSTEM, MAX_AGENT_ROUNDS, MAX_HISTORY_TURNS, askAgent, recordAnalysis, trimHistory } from '../src/core/agent'
+import { AGENT_SYSTEM, MAX_AGENT_ROUNDS, MAX_HISTORY_TURNS, askAgent, formatViewContexts, recordAnalysis, trimHistory } from '../src/core/agent'
 import { formatAnalysisForAgent } from '../src/core/analysis'
 import { addConsideration, loadConsiderations } from '../src/core/considerations'
 import type { ChatMessage, ToolCall } from '../src/core/llm'
 import { UNKNOWN_ARTICLE_URL_ERROR } from '../src/core/tools'
-import type { AnalysisResult } from '../src/shared/types'
+import type { AnalysisResult, ViewContext } from '../src/shared/types'
 import { FakeLLM, RoutedLLM, article, bar, call, calls, fundamentals, geoArticle, quote, say } from './helpers'
 
 beforeEach(() => {
@@ -202,6 +202,37 @@ describe('askAgent', () => {
     ])
     expect(history).toHaveLength(4)
     expect(history.at(-1)).toMatchObject({ role: 'assistant', text: 'now' })
+  })
+
+  it('appends the data behind chart-point references to the question', async () => {
+    const context: ViewContext = {
+      token: '[AAPL on 2026-09-12]',
+      code: 'AAPL.US',
+      range: '3M',
+      bar: { date: '2026-09-12', open: 230, high: 233, low: 229, close: 231, volume: 5000 },
+      prevClose: 220,
+      rangeStartClose: 200
+    }
+    const llm = new FakeLLM([say('ok')])
+    await askAgent(llm, 'why the jump? [AAPL on 2026-09-12]', [], { contexts: [context] })
+    const sent = (llm.requests[0].messages.at(-1) as { text: string }).text
+    expect(sent).toMatch(/^why the jump\? \[AAPL on 2026-09-12\]\n\n\[AAPL on 2026-09-12\] = AAPL\.US daily bar 2026-09-12: /)
+    expect(sent).toContain('close 231')
+    expect(sent).toContain('+5.00% vs previous close')
+    expect(sent).toContain('+15.50% since the start of the 3M chart')
+  })
+
+  it('leaves the question alone without references', async () => {
+    const llm = new FakeLLM([say('ok')])
+    await askAgent(llm, 'plain', [], { contexts: [] })
+    expect((llm.requests[0].messages.at(-1) as { text: string }).text).toBe('plain')
+  })
+
+  it('skips the previous-close change on the first bar', () => {
+    const text = formatViewContexts([
+      { token: '[X on d]', code: 'X.US', range: '1M', bar: bar(), prevClose: null, rangeStartClose: bar().close }
+    ])
+    expect(text).not.toContain('previous close')
   })
 
   it('leaves history untouched when the model fails', async () => {

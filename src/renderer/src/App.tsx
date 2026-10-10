@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Quote, WatchlistEntry } from '../../shared/types'
+import type { Quote, ViewContext, WatchlistEntry } from '../../shared/types'
 import { ChatPanel } from './components/ChatPanel'
 import { ConsiderationsPanel } from './components/ConsiderationsPanel'
 import { Dashboard } from './components/Dashboard'
@@ -60,6 +60,9 @@ export default function App() {
   const [chatStarted, setChatStarted] = useState(false)
   const [chatWidth, setChatWidth] = useState(loadChatWidth)
   const bridge = useBridge(chatStarted)
+  // The latest chart point clicked, for the chat input; `n` makes a repeat
+  // click on the same point a new request.
+  const [reference, setReference] = useState<{ n: number; context: ViewContext } | null>(null)
 
   const [showSettings, setShowSettings] = useState(false)
   const [showConsiderations, setShowConsiderations] = useState(false)
@@ -162,6 +165,11 @@ export default function App() {
     bridge.analyze(code)
   }
 
+  const referenceInChat = (context: ViewContext): void => {
+    openChat()
+    setReference((prev) => ({ n: (prev?.n ?? 0) + 1, context }))
+  }
+
   return (
     <div className="app">
       <header className="toolbar">
@@ -215,6 +223,7 @@ export default function App() {
               onBack={() => setSelected(null)}
               onTogglePin={(name) => togglePin({ code: selected.code, name })}
               onAnalyze={() => analyzeInChat(selected.code)}
+              onReference={referenceInChat}
             />
           ) : (
             <Dashboard
@@ -243,6 +252,7 @@ export default function App() {
               onClose={() => setChatOpen(false)}
               onOpenConsiderations={() => setShowConsiderations(true)}
               onOpenSettings={() => setShowSettings(true)}
+              reference={reference}
             />
           </div>
         )}

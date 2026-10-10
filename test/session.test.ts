@@ -52,6 +52,24 @@ describe('ChatSession', () => {
     expect(events[1]).toMatchObject({ id: 'a1', data: { text: 'AAPL is up.', quotes: [] } })
   })
 
+  it('sends chart-point data to the model but keeps the typed question as the turn text', async () => {
+    const llm = new FakeLLM([say('A drop.')])
+    llmHolder.current = llm
+    const { chat, events, settle } = session()
+    const context = {
+      token: '[AAPL on 2026-09-12]',
+      code: 'AAPL.US',
+      range: '3M' as const,
+      bar: { date: '2026-09-12', open: 1, high: 2, low: 1, close: 2, volume: 3 },
+      prevClose: 1,
+      rangeStartClose: 1
+    }
+    chat.handle({ id: 'a1', cmd: 'ask', text: 'why? [AAPL on 2026-09-12]', contexts: [context] })
+    await settle()
+    expect(events.at(-1)).toMatchObject({ type: 'result' })
+    expect((llm.requests[0].messages.at(-1) as { text: string }).text).toContain('AAPL.US daily bar 2026-09-12')
+  })
+
   it('reports a missing provider key as an error for that request', async () => {
     const { chat, events, settle } = session()
     chat.handle({ id: 'a1', cmd: 'ask', text: 'hi' })

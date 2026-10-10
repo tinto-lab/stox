@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { periodChange, quoteDate, withLiveBar } from '../../../shared/liveBar'
 import { displaySymbol } from '../../../shared/symbols'
-import type { Bar, Fundamentals, HistoryRange, Quote, WatchlistEntry } from '../../../shared/types'
+import type { Bar, Fundamentals, HistoryRange, Quote, ViewContext, WatchlistEntry } from '../../../shared/types'
 import {
   changeClass,
   changeTooltip,
@@ -160,7 +160,8 @@ export function StockDetail({
   pinned,
   onBack,
   onTogglePin,
-  onAnalyze
+  onAnalyze,
+  onReference
 }: {
   entry: WatchlistEntry
   quote: Quote | undefined
@@ -171,6 +172,8 @@ export function StockDetail({
   onBack: () => void
   onTogglePin: (name: string) => void
   onAnalyze: () => void
+  /** A chart point was clicked: insert a reference to it in the chat input. */
+  onReference: (context: ViewContext) => void
 }) {
   const [range, setRange] = useState<HistoryRange>('3M')
   const [historyBars, setBars] = useState<Bar[] | null>(null)
@@ -285,7 +288,20 @@ export function StockDetail({
         ) : bars === null ? (
           <div className="chart-empty">Loading…</div>
         ) : (
-          <PriceChart bars={bars} range={range} />
+          <PriceChart
+            bars={bars}
+            range={range}
+            onPick={(i) =>
+              onReference({
+                token: `[${displaySymbol(entry.code)} on ${bars[i].date}]`,
+                code: entry.code,
+                range,
+                bar: bars[i],
+                prevClose: i > 0 ? bars[i - 1].close : null,
+                rangeStartClose: bars[0].close
+              })
+            }
+          />
         )}
       </div>
 
