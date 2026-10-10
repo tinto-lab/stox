@@ -22,7 +22,10 @@ src/core/               everything both frontends share -- no Electron, no UI
   agent.ts              the chat agent: natural-language questions via tool use
   analysis.ts           the /analyze multi-agent trend/fundamentals/news/geopolitics pipeline
   considerations.ts     standing factors the agent always weighs, persisted to disk
+  conversations.ts      saved chat conversations (resume later), titled by a short LLM summary
   session.ts            one chat conversation driven by commands -- the app's chat backend
+  whisper.ts            runs whisper.cpp's whisper-server and downloads its model
+  voiceSession.ts       streaming dictation: live preview while speaking, commit after a pause
 src/cli/                the terminal REPL (shell.ts) and its rendering (render.ts)
 src/main/               Electron main process: windows, IPC
 src/preload/            the window.stox API exposed to the renderer
@@ -30,6 +33,7 @@ src/renderer/           the React UI
 src/shared/             types and the chat protocol, shared by all of the above
 test/                   vitest suite (see Testing)
 scripts/kill_app.sh     stops any running Stox.app (used by `npm run package:mac`)
+scripts/fetch-whisper.sh  builds the whisper-server binary into build/bin/ (see Voice dictation)
 ```
 
 Each core module has one job; the module comments say which.
@@ -138,7 +142,8 @@ Commands:
 | `/analyze <ticker>` | trend, fundamentals, news and geopolitics specialists, then a risk assessment |
 | `/help`        | show help                                                  |
 | `/clear`       | clear the screen                                           |
-| `/reset`       | forget the conversation so far (also `/new`)               |
+| `/reset`       | start a new conversation; the last one is saved (also `/new`) |
+| `/resume [n]`  | list saved conversations, or pick up number n             |
 | `/considerations` | list standing factors the agent always weighs (also `/remembered`) |
 | `/think [on\|off]` | show or switch thinking mode (DeepSeek)                  |
 | `/quit`        | leave (also `/exit`, Ctrl-D)                               |
@@ -173,10 +178,20 @@ Tesla has a couple of headlines today.
 
 The agent remembers the current session: follow-ups like "what about its
 news?" or "read that first one in full" resolve against earlier turns,
-`/analyze` results included. History is kept in memory only (nothing is
-written to disk) and is capped at the most recent 6 turns to bound token
-cost, trimmed only at safe turn boundaries. Run `/reset` (or `/new`) to
-start a clean conversation without restarting stox.
+`/analyze` results included. What the model sees is capped at the most
+recent 6 turns to bound token cost, trimmed only at safe turn boundaries.
+Within a question the agent's tool loop is capped at 10 rounds. Run
+`/reset` (or `/new`) to start a clean conversation without restarting stox.
+
+### Saved conversations
+
+Conversations are saved as you go, one JSON file each under
+`~/.config/stox/conversations/` (the newest 100 are kept), titled with a
+short summary of the first question. Only questions you ask are saved, not
+typed `/price` or `/analyze` commands. `/resume` lists them and
+`/resume <n>` picks one up again, in the CLI or in the app's chat panel
+(History button), which share the folder. The files are plain text, safe
+to delete.
 
 ### Standing considerations (persist across sessions)
 
@@ -220,14 +235,37 @@ stock prices and company fundamentals:
   Pin or unpin the stock from here.
 - **Research chat** (⌘J) — a side panel with the same agent the terminal
   REPL has (plain-English questions, `/price`, `/analyze`, `/reset`,
-  standing considerations). The stock view's "Analyze in chat" button runs
-  `/analyze` there.
+  standing considerations, saved conversations). The stock view's
+  "Analyze in chat" button runs `/analyze` there, and clicking a point on a
+  price chart inserts it into the chat input.
+- **Voice dictation** — speak into the chat input instead of typing; see
+  below.
+- **Settings** — API keys, the chat's LLM provider/model, light/dark theme
+  and the dictation setup.
 
 Everything runs in the app's main process on `src/core/`: market data
 (EODHD for quotes, history and symbol search, Yahoo Finance for
 fundamentals), the chat (`ChatSession`, reached from the renderer over IPC
 with the commands and events in `src/shared/bridgeProtocol.ts`). There's
 no separate backend process.
+
+### Voice dictation
+
+Hold Space for half a second in the chat input (or click the wave button)
+to dictate; Esc cancels. Speech is transcribed locally by
+[whisper.cpp](https://github.com/ggml-org/whisper.cpp)'s `whisper-server`,
+so audio never leaves the machine. Text appears in the draft while you
+talk and is committed after a pause.
+
+Setup is in Settings > Voice dictation: download the model (about 60 MB,
+stored in `~/.config/stox/models/`), start or stop the engine, and choose
+the spoken language (`auto` by default; saved in `preferences.json`).
+Giving a language avoids short phrases being misdetected. The mic button
+shows a status light.
+
+The server binary isn't in git. Build it once with
+`scripts/fetch-whisper.sh` (needs git and cmake: `brew install cmake`);
+it lands in `build/bin/` and is bundled into the packaged app.
 
 ### Running it (development)
 
@@ -293,6 +331,9 @@ stox reads, so a developer's own keys or files can't leak in or be written:
 | `sources.test.ts`     | Google News parsing, redirect-link decoding and caching, article extraction (mocked fetch) |
 | `webfetch.test.ts`    | article fetching: truncation and error handling            |
 | `stores.test.ts`      | `.env` loading and precedence, considerations |
+| `conversations.test.ts` | saving, titling, listing and resuming conversations     |
+| `voice.test.ts`       | dictation: speech detection, WAV encoding, streaming preview and commit |
+| `liveBar.test.ts`     | merging the live quote into the chart (latest bar, period change)|
 | `llm.test.ts`         | provider registry, OpenAI-format message conversion and parsing, the tool loop's round budget |
 | `tools.test.ts`       | every data tool's result text, full-text fallback, errors  |
 | `agent.test.ts`       | the chat agent with a scripted model: every tool, the read_article allow-list, considerations, history threading/trimming |
@@ -307,20 +348,3 @@ stox reads, so a developer's own keys or files can't leak in or be written:
 - **Real-time on the free tier is limited to the demo tickers.** For your own
   key, real-time quotes on arbitrary tickers may need a paid plan, while
   end-of-day data is free. An `access denied` line means you've hit that gate.
-
-## Roadmap
-
-- [ ] Confirm live quotes with a real key
-- [x] Confirm the agent path end-to-end with a real LLM provider key
-- [x] Financial news (EODHD, via the `get_stock_news` agent tool)
-- [x] Full-article reading when a news summary isn't enough (`read_article`)
-- [x] Conversation memory across turns in a session (`/reset` to clear it)
-- [x] Standing considerations that persist across sessions (`remember_consideration`, `/considerations`)
-- [x] Geopolitical/macro news (Google News RSS, via the `get_geopolitical_news` agent tool and `/analyze`'s geopolitics specialist)
-- [x] Add fundamentals fetch (financials, ratios — also where company names live)
-- [ ] CI (run `npm test` on push)
-- [x] Native macOS app (Electron + TypeScript/React)
-- [x] Package the macOS app into a standalone double-clickable `.app` (`npm run package:mac`)
-- [x] One TypeScript core for the CLI and the app (was a Python backend bundled with PyInstaller)
-- [ ] Custom app icon (currently the default Electron icon)
-- [ ] Apple Developer ID + notarization, if the app is ever distributed beyond local personal use
