@@ -1,9 +1,10 @@
-import { SAMPLE_RATE, SpeechDetector, encodeWav } from '../shared/audio'
+import { SAMPLE_RATE, SpeechDetector, conditionAudio, encodeWav } from '../shared/audio'
 import type { VoiceEvent } from '../shared/types'
 
-/** Turns WAV audio into text (whisper.cpp's server in the app, a fake in tests). */
+/** Turns WAV audio into text (Gemma in the app, a fake in tests). */
 export interface Transcriber {
-  transcribe(wav: Uint8Array): Promise<string>
+  /** `onText`, if given, hears the text so far as the recognizer produces it. */
+  transcribe(wav: Uint8Array, onText?: (text: string) => void): Promise<string>
 }
 
 /** How often the growing utterance is re-transcribed to refresh the preview. */
@@ -17,11 +18,15 @@ const OVERLAP_MS = 200
 
 const ms = (samples: number): number => (samples / SAMPLE_RATE) * 1000
 
-/** Whisper emits tags like [BLANK_AUDIO] or (music) for non-speech. */
+/** Speech models can emit tags like [BLANK_AUDIO] or (music) for non-speech. */
 function clean(text: string): string {
   const t = text.trim()
   return /^[[(].*[\])]$/.test(t) ? '' : t
 }
+
+/** Text reduced to its words, so a pass that differs only in punctuation or case counts as the same. */
+const sameWords = (text: string): string =>
+  text.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, '').replace(/\s+/g, ' ').trim()
 
 export interface VoiceSession {
   /** 16 kHz mono Int16 audio, as it is captured. */
@@ -48,6 +53,7 @@ export function createVoiceSession(transcriber: Transcriber, emit: (event: Voice
   let dirty = false // audio arrived since the last partial request
   let epoch = 0 // bumped on commit/cancel, so a late partial of an old utterance is dropped
   let partialInFlight = false
+  let preview = '' // the last partial sent for this utterance
   let queue: Promise<void> = Promise.resolve()
   let ended = false
 
@@ -67,6 +73,7 @@ export function createVoiceSession(transcriber: Transcriber, emit: (event: Voice
     hasSpeech = false
     silenceMs = 0
     dirty = false
+    preview = ''
     epoch++
   }
 
@@ -77,13 +84,25 @@ export function createVoiceSession(transcriber: Transcriber, emit: (event: Voice
     dirty = false
     partialInFlight = true
     const myEpoch = epoch
-    const wav = encodeWav(snapshot())
+    const wav = encodeWav(conditionAudio(snapshot()))
     // Queued behind any commit so results come back in order.
     queue = queue.then(async () => {
       try {
         if (myEpoch !== epoch) return
-        const text = clean(await transcriber.transcribe(wav))
-        if (myEpoch === epoch && !ended) emit({ type: 'partial', text })
+        // The text grows word by word as the recognizer produces it, then
+        // the finished result lands (it may differ slightly from the last word).
+        // Every pass re-reads the whole utterance, so it streams in from the
+        // first word again. Until it passes the words already on screen it
+        // stays quiet, so the preview only ever grows or is corrected by a
+        // finished pass. An empty pass (the recognizer gave up) changes nothing.
+        const live = (raw: string, finished = false): void => {
+          const text = clean(raw)
+          if (!text || text === preview || myEpoch !== epoch || ended) return
+          if (!finished && sameWords(preview).startsWith(sameWords(text))) return
+          preview = text
+          emit({ type: 'partial', text })
+        }
+        live(await transcriber.transcribe(wav, (text) => live(text)), true)
       } catch (e) {
         fail(e)
       } finally {
@@ -97,7 +116,7 @@ export function createVoiceSession(transcriber: Transcriber, emit: (event: Voice
     const audio = snapshot()
     const tail = audio.slice(Math.max(0, audio.length - Math.round((OVERLAP_MS / 1000) * SAMPLE_RATE)))
     reset(tail)
-    const wav = encodeWav(audio)
+    const wav = encodeWav(conditionAudio(audio))
     queue = queue.then(async () => {
       try {
         emit({ type: 'commit', text: clean(await transcriber.transcribe(wav)) })

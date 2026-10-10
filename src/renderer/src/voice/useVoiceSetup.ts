@@ -4,8 +4,8 @@ import type { VoiceLanguage, VoiceStatus } from '../../../shared/types'
 export type SetupPhase = 'idle' | 'downloading' | 'starting'
 
 /**
- * The state of voice input -- the speech model on disk and the whisper
- * server running -- and the actions to change it. One instance lives in
+ * The state of voice input -- the speech model on disk and the speech
+ * engine running -- and the actions to change it. One instance lives in
  * App, shared by the chat panel (mic button and its status dot) and the
  * Settings panel (where the setup happens).
  *
@@ -76,18 +76,6 @@ export function useVoiceSetup(autoStart: boolean) {
     [refresh]
   )
 
-  const setPolish = useCallback(
-    async (enabled: boolean) => {
-      try {
-        await window.stox.setVoicePolish(enabled)
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
-      }
-      await refresh()
-    },
-    [refresh]
-  )
-
   const canAutoStart = !!status?.available && status.modelReady && status.server === 'stopped'
   const autoTried = useRef(false)
   useEffect(() => {
@@ -105,8 +93,7 @@ export function useVoiceSetup(autoStart: boolean) {
     ready: !!status?.available && status.modelReady && status.server === 'running',
     prepare,
     stopServer,
-    setLanguage,
-    setPolish
+    setLanguage
   }
 }
 

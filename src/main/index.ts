@@ -3,12 +3,11 @@ import { app, BrowserWindow, ipcMain, session, shell, systemPreferences } from '
 import { loadEnv, parseEnvFile, userEnvPath, writeUserEnv } from '../core/config'
 import { fetchFundamentals, fetchHistory, fetchQuotes, hasEodhdKey, searchSymbols } from '../core/marketData'
 import { ChatSession } from '../core/session'
-import { polishTranscript } from '../core/polish'
 import { createVoiceSession, type VoiceSession } from '../core/voiceSession'
-import { WhisperServer, ensureModel, modelReady } from '../core/whisper'
+import { LlamaServer, ensureModel, modelReady } from '../core/localLlm'
 import type { BridgeCommand } from '../shared/bridgeProtocol'
 import type { IpcResult, Theme, VoiceEvent, VoiceLanguage, VoiceStatus, WatchlistEntry } from '../shared/types'
-import { applyTheme, getTheme, getVoiceLanguage, getVoicePolish, setTheme, setVoiceLanguage, setVoicePolish } from './preferences'
+import { applyTheme, getTheme, getVoiceLanguage, setTheme, setVoiceLanguage } from './preferences'
 import { readWatchlist, writeWatchlist } from './watchlist'
 
 let mainWindow: BrowserWindow | null = null
@@ -48,15 +47,15 @@ const sendVoice = (event: VoiceEvent): void => {
   mainWindow?.webContents.send('voice:event', event)
 }
 
-// Voice dictation: whisper.cpp's server, started on first use. The binary
+// Voice dictation: Gemma on llama.cpp's server, started on first use. The binary
 // ships in the app's resources; a dev checkout keeps it under build/bin.
-const whisper = new WhisperServer(
+const llama = new LlamaServer(
   app.isPackaged
-    ? path.join(process.resourcesPath, 'bin', 'whisper-server')
-    : path.resolve(__dirname, '..', '..', 'build', 'bin', 'whisper-server'),
+    ? path.join(process.resourcesPath, 'bin', 'llama-server')
+    : path.resolve(__dirname, '..', '..', 'build', 'bin', 'llama-server'),
   (state) => sendVoice({ type: 'server', state })
 )
-whisper.language = getVoiceLanguage()
+llama.language = getVoiceLanguage()
 let voice: VoiceSession | null = null
 
 function createWindow(): void {
@@ -125,30 +124,29 @@ handle('settings:save', (values: Record<string, string>) => {
 
 
 handle('voice:status', (): VoiceStatus => ({
-  available: whisper.available(),
+  available: llama.available(),
   modelReady: modelReady(),
-  server: whisper.currentState(),
-  language: getVoiceLanguage(),
-  polish: getVoicePolish()
+  server: llama.currentState(),
+  language: getVoiceLanguage()
 }))
 let preparing: Promise<void> | null = null
 handle('voice:prepare', () => {
   preparing ??= (async () => {
-    if (!whisper.available()) throw new Error('Voice input is unavailable: the whisper binary is missing')
+    if (!llama.available()) throw new Error('Voice input is unavailable: the llama-server binary is missing')
     const model = await ensureModel((fraction) => sendVoice({ type: 'model-progress', fraction }))
-    await whisper.start(model)
+    await llama.start(model)
   })().finally(() => {
     preparing = null
   })
   return preparing
 })
 handle('voice:start', async () => {
-  if (!whisper.running()) throw new Error('Voice input is not ready yet')
+  if (!llama.running()) throw new Error('Voice input is not ready yet')
   if (process.platform === 'darwin' && !(await systemPreferences.askForMediaAccess('microphone'))) {
     throw new Error('Microphone access was denied. Allow Stox under System Settings > Privacy & Security > Microphone.')
   }
   voice?.cancel()
-  voice = createVoiceSession(whisper, sendVoice)
+  voice = createVoiceSession(llama, sendVoice)
 })
 ipcMain.on('voice:push', (_event, buffer: ArrayBuffer | Uint8Array) => {
   if (!voice) return
@@ -160,17 +158,16 @@ handle('voice:stop', async () => {
   voice = null
   await ending?.stop()
 })
+handle('voice:polish', (text: string) => llama.polish(text))
 handle('voice:stop-server', () => {
   voice?.cancel()
   voice = null
-  whisper.stop()
+  llama.stop()
 })
 handle('voice:set-language', (language: VoiceLanguage) => {
   setVoiceLanguage(language)
-  whisper.language = language // applies from the next request
+  llama.language = language // applies from the next request
 })
-handle('voice:set-polish', (enabled: boolean) => setVoicePolish(enabled))
-handle('voice:polish', (text: string) => polishTranscript(text))
 handle('voice:cancel', () => {
   voice?.cancel()
   voice = null
@@ -192,7 +189,7 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('will-quit', () => whisper.stop())
+app.on('will-quit', () => llama.stop())
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow()

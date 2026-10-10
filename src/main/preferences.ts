@@ -5,7 +5,7 @@ import { nativeTheme } from 'electron'
 import { THEMES, VOICE_LANGUAGES, type Theme, type VoiceLanguage } from '../shared/types'
 
 /**
- * App-only preferences (the light/dark choice and the dictation settings), persisted in
+ * App-only preferences (the light/dark choice and the dictation language), persisted in
  * ~/.config/stox/ alongside the watchlist and .env. Unlike .env these are
  * never read by the terminal CLI.
  */
@@ -14,18 +14,16 @@ const PREFERENCES_PATH = path.join(os.homedir(), '.config', 'stox', 'preferences
 interface Preferences {
   theme: Theme
   voiceLanguage: VoiceLanguage
-  voicePolish: boolean
 }
 
-const DEFAULTS: Preferences = { theme: 'system', voiceLanguage: 'auto', voicePolish: false }
+const DEFAULTS: Preferences = { theme: 'system', voiceLanguage: 'auto' }
 
 function readPreferences(): Preferences {
   try {
-    const parsed = JSON.parse(fs.readFileSync(PREFERENCES_PATH, 'utf8')) as { theme?: unknown; voiceLanguage?: unknown; voicePolish?: unknown }
+    const parsed = JSON.parse(fs.readFileSync(PREFERENCES_PATH, 'utf8')) as { theme?: unknown; voiceLanguage?: unknown }
     return {
       theme: THEMES.find((t) => t === parsed.theme) ?? DEFAULTS.theme,
-      voiceLanguage: VOICE_LANGUAGES.find((l) => l.code === parsed.voiceLanguage)?.code ?? DEFAULTS.voiceLanguage,
-      voicePolish: parsed.voicePolish === true
+      voiceLanguage: VOICE_LANGUAGES.find((l) => l.code === parsed.voiceLanguage)?.code ?? DEFAULTS.voiceLanguage
     }
   } catch {
     return DEFAULTS // no file yet, or unreadable -- fall back to defaults
@@ -64,12 +62,4 @@ export function getVoiceLanguage(): VoiceLanguage {
 export function setVoiceLanguage(voiceLanguage: VoiceLanguage): void {
   if (!VOICE_LANGUAGES.some((l) => l.code === voiceLanguage)) throw new Error(`unknown language: ${voiceLanguage}`)
   writePreferences({ ...readPreferences(), voiceLanguage })
-}
-
-export function getVoicePolish(): boolean {
-  return readPreferences().voicePolish
-}
-
-export function setVoicePolish(voicePolish: boolean): void {
-  writePreferences({ ...readPreferences(), voicePolish: voicePolish === true })
 }

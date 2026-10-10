@@ -180,14 +180,16 @@ export function ChatPanel({
       dictated.current = text
       setDraft(text)
     },
-    (cancelled) => {
+    (cancelled, pieces) => {
       if (cancelled) setDraft(dictationBase.current)
       focusEnd()
       const base = dictationBase.current
       const spoken = dictated.current.startsWith(base) ? dictated.current.slice(base.length).trim() : ''
-      if (cancelled || !voice.status?.polish || !spoken) return
-      // The box is locked while the model cleans the transcript; on any
-      // failure the raw text simply stays.
+      // Speech split at pauses was transcribed piece by piece, so each piece
+      // has its own capital and full stop. One more pass over the whole
+      // thing joins them. The box is locked meanwhile; if it fails the text
+      // simply stays as dictated.
+      if (cancelled || pieces < 2 || !spoken) return
       setPolishing(true)
       window.stox
         .polishSpeech(spoken)

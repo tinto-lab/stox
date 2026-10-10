@@ -12,7 +12,7 @@ const CHAT_FIELDS = [
   { key: 'OPENAI_API_KEY', label: 'OpenAI API key' }
 ] as const
 
-/** Voice dictation: the speech model and the engine (whisper server) that runs it. */
+/** Voice dictation: the speech model and the engine (Gemma on llama.cpp) that runs it. */
 function VoiceSection({ voice }: { voice: VoiceSetup }) {
   const { status, phase, progress, error } = voice
   if (!status) return null
@@ -21,11 +21,11 @@ function VoiceSection({ voice }: { voice: VoiceSetup }) {
     <>
       <h3 className="settings-section">Voice dictation</h3>
       <p className="panel-sheet-hint">
-        Speech is transcribed on this Mac with whisper.cpp; the audio never leaves it. Hold Space in the
+        Speech is transcribed on this Mac with Gemma; the audio never leaves it. Hold Space in the
         chat input, or click its wave button, to dictate.
       </p>
       {!status.available ? (
-        <p className="panel-sheet-hint">Voice input isn't available: this build has no whisper engine.</p>
+        <p className="panel-sheet-hint">Voice input isn't available: this build has no speech engine.</p>
       ) : (
         <>
           <div className="voice-row">
@@ -36,10 +36,10 @@ function VoiceSection({ voice }: { voice: VoiceSetup }) {
                 {Math.round(progress * 100)}%
               </span>
             ) : status.modelReady ? (
-              <span className="voice-value">Downloaded (about 60 MB)</span>
+              <span className="voice-value">Downloaded (about 3.4 GB)</span>
             ) : (
               <button type="button" className="primary" disabled={busy} onClick={() => void voice.prepare(false)}>
-                Download (about 60 MB)
+                Download (about 3.4 GB)
               </button>
             )}
           </div>
@@ -79,18 +79,6 @@ function VoiceSection({ voice }: { voice: VoiceSetup }) {
           <p className="panel-sheet-hint">
             Pin the language you dictate in: auto-detection can guess wrong on a short phrase. Applies
             from the next phrase.
-          </p>
-          <label className="voice-row">
-            <span>Polish speech</span>
-            <input
-              type="checkbox"
-              checked={status.polish}
-              onChange={(e) => void voice.setPolish(e.target.checked)}
-            />
-          </label>
-          <p className="panel-sheet-hint">
-            When dictation ends, the chat model corrects recognition errors and punctuation. The
-            transcript (text only, not audio) is sent to your chat provider.
           </p>
           <p className="panel-sheet-hint">
             The engine starts when you open the chat and stops after 10 minutes without dictation.

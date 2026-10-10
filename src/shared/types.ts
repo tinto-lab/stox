@@ -210,7 +210,7 @@ export type Theme = (typeof THEMES)[number]
 /** What a dictation session reports while the user speaks. `partial` is the
  * tentative text of the utterance in progress (each one replaces the last);
  * `commit` is that utterance's final text; `done` ends the session. */
-/** Languages dictation can be pinned to; 'auto' lets whisper detect it. */
+/** Languages dictation can be pinned to; 'auto' lets the model detect it. */
 export const VOICE_LANGUAGES = [
   { code: 'auto', label: 'Auto-detect' },
   { code: 'en', label: 'English' },
@@ -237,16 +237,14 @@ export type VoiceEvent =
   | { type: 'server'; state: ServerState }
 
 export interface VoiceStatus {
-  /** The bundled whisper binary is present. */
+  /** The bundled llama-server binary is present. */
   available: boolean
   /** The speech model is downloaded. */
   modelReady: boolean
-  /** Whether the whisper server is up; dictation can start only when it is. */
+  /** Whether the speech engine is up; dictation can start only when it is. */
   server: ServerState
   /** The language dictation is pinned to ('auto' = detect it). */
   language: VoiceLanguage
-  /** Dictated text is cleaned up by the chat model when dictation ends. */
-  polish: boolean
 }
 
 /** The `window.stox` API the preload script exposes to the renderer. */
@@ -266,7 +264,7 @@ export interface StoxApi {
   saveSettings(values: Record<string, string>): Promise<void>
   getTheme(): Promise<Theme>
   setTheme(theme: Theme): Promise<void>
-  // Voice dictation -- whisper.cpp running locally in the main process.
+  // Voice dictation -- Gemma running locally on llama.cpp in the main process.
   voiceStatus(): Promise<VoiceStatus>
   /** Downloads the model if needed (progress arrives as events) and starts the
    * server. Dictation can't start before this has resolved. */
@@ -277,12 +275,11 @@ export interface StoxApi {
   voicePush(samples: Int16Array): void
   /** Ends the session; resolves once the last text has been committed. */
   voiceStop(): Promise<void>
-  /** Shuts the whisper server down (it starts again on demand). */
+  /** Joins and tidies text that was dictated in several pieces. */
+  polishSpeech(text: string): Promise<string>
+  /** Shuts the speech engine down (it starts again on demand). */
   voiceStopServer(): Promise<void>
   setVoiceLanguage(language: VoiceLanguage): Promise<void>
-  setVoicePolish(enabled: boolean): Promise<void>
-  /** Fixes recognition errors and punctuation in a dictated transcript. */
-  polishSpeech(text: string): Promise<string>
   voiceCancel(): void
   onVoiceEvent(listener: (event: VoiceEvent) => void): () => void
 }

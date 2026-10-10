@@ -16,9 +16,10 @@ export function joinSpoken(base: string, spoken: string): string {
  * Live dictation. While listening, `onText` gets the full text to show
  * (`base` + what has been said so far) on every update; `onEnd` fires once
  * when the session is over, with `cancelled` true if the text should be
- * thrown away.
+ * thrown away, and with how many pieces (pauses) the speech was
+ * transcribed in.
  */
-export function useDictation(onText: (text: string) => void, onEnd: (cancelled: boolean) => void) {
+export function useDictation(onText: (text: string) => void, onEnd: (cancelled: boolean, pieces: number) => void) {
   const [state, setState] = useState<DictationState>('idle')
   const [error, setError] = useState<string | null>(null)
   const recorder = useRef<Recorder | null>(null)
@@ -26,6 +27,7 @@ export function useDictation(onText: (text: string) => void, onEnd: (cancelled: 
   const startSeq = useRef(0)
   const base = useRef('')
   const committed = useRef('')
+  const pieces = useRef(0)
   const callbacks = useRef({ onText, onEnd })
   callbacks.current = { onText, onEnd }
 
@@ -39,7 +41,7 @@ export function useDictation(onText: (text: string) => void, onEnd: (cancelled: 
     recorder.current?.stop()
     recorder.current = null
     set('idle')
-    callbacks.current.onEnd(cancelled)
+    callbacks.current.onEnd(cancelled, pieces.current)
   }, [])
 
   useEffect(
@@ -52,6 +54,7 @@ export function useDictation(onText: (text: string) => void, onEnd: (cancelled: 
             break
           case 'commit':
             committed.current = joinSpoken(committed.current, event.text)
+            if (event.text) pieces.current++
             callbacks.current.onText(joinSpoken(base.current, committed.current))
             break
           case 'done':
@@ -80,6 +83,7 @@ export function useDictation(onText: (text: string) => void, onEnd: (cancelled: 
     if (stateRef.current !== 'idle') return
     base.current = currentText
     committed.current = ''
+    pieces.current = 0
     setError(null)
     set('starting')
     // A start is async (it may wait on the mic permission prompt), so the

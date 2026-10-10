@@ -1,6 +1,6 @@
 /**
  * Audio helpers for voice dictation: the renderer captures microphone audio
- * at the device's sample rate; whisper.cpp wants 16 kHz mono.
+ * at the device's sample rate; the speech model wants 16 kHz mono.
  */
 
 export const SAMPLE_RATE = 16_000
@@ -67,6 +67,44 @@ const MIN_NOISE = 0.0005
 /** First-order high-pass cutoff, to ignore rumble, hum and DC offset. */
 const HIGH_PASS_HZ = 100
 
+/** First-order high-pass filter over consecutive Float-scaled samples. */
+class HighPass {
+  private prevIn = 0
+  private prevOut = 0
+  private readonly alpha: number
+
+  constructor(sampleRate = SAMPLE_RATE) {
+    const rc = 1 / (2 * Math.PI * HIGH_PASS_HZ)
+    this.alpha = rc / (rc + 1 / sampleRate)
+  }
+
+  /** One sample, -1..1 in and out. */
+  next(x: number): number {
+    this.prevOut = this.alpha * (this.prevOut + x - this.prevIn)
+    this.prevIn = x
+    return this.prevOut
+  }
+}
+
+/** Quiet speech is lifted until its peak reaches this level (about -6 dBFS)... */
+const TARGET_PEAK = 0.5
+/** ...by at most this factor, so a near-silent recording isn't blown up into hiss. */
+const MAX_GAIN = 8
+
+/**
+ * Prepares an utterance for the speech model: removes rumble, hum and DC
+ * offset below 100 Hz, and raises a quiet recording (a soft voice, a distant
+ * microphone) toward a healthy level. Loud audio is left at its level.
+ */
+export function conditionAudio(samples: Int16Array): Int16Array {
+  const filter = new HighPass()
+  const filtered = Float32Array.from(samples, (s) => filter.next(s / 0x8000))
+  let peak = 0
+  for (const x of filtered) peak = Math.max(peak, Math.abs(x))
+  const gain = peak > 0 ? Math.min(MAX_GAIN, Math.max(1, TARGET_PEAK / peak)) : 1
+  return Int16Array.from(filtered, (x) => Math.max(-1, Math.min(1, x * gain)) * 0x7fff)
+}
+
 /**
  * Tells speech from background noise by comparing each chunk's level with
  * the room's own noise floor, so a noisy room doesn't read as speech forever
@@ -78,23 +116,18 @@ const HIGH_PASS_HZ = 100
 export class SpeechDetector {
   private noise: number | null = null
   private speaking = false
-  private prevIn = 0
-  private prevOut = 0
-  private readonly alpha: number
+  private readonly filter: HighPass
 
   constructor(sampleRate = SAMPLE_RATE) {
-    const rc = 1 / (2 * Math.PI * HIGH_PASS_HZ)
-    this.alpha = rc / (rc + 1 / sampleRate)
+    this.filter = new HighPass(sampleRate)
   }
 
   /** The chunk's level after the high-pass filter, 0..1. */
   private level(samples: Int16Array): number {
     let sum = 0
     for (const s of samples) {
-      const x = s / 0x8000
-      this.prevOut = this.alpha * (this.prevOut + x - this.prevIn)
-      this.prevIn = x
-      sum += this.prevOut * this.prevOut
+      const y = this.filter.next(s / 0x8000)
+      sum += y * y
     }
     return samples.length ? Math.sqrt(sum / samples.length) : 0
   }

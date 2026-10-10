@@ -14,7 +14,7 @@
     "test": "vitest run",
     "cli": "bun src/cli/index.ts",
     "build:cli": "bun build src/cli/index.ts --compile --minify --outfile dist/stox && rm -f .*.bun-build",
-    "fetch:whisper": "scripts/fetch-whisper.sh"
+    "fetch:llama": "scripts/fetch-llama.sh"
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",
@@ -53,8 +53,8 @@
     },
     "extraResources": [
       {
-        "from": "build/bin/whisper-server",
-        "to": "bin/whisper-server"
+        "from": "build/bin/llama-server",
+        "to": "bin/llama-server"
       }
     ]
   }

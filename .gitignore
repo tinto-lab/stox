@@ -13,5 +13,5 @@ dist/
 # build:cli` deletes them, a bare `bun build --compile` does not.
 .*.bun-build
 
-# Built by scripts/fetch-whisper.sh.
+# Built by scripts/fetch-llama.sh.
 build/bin/
