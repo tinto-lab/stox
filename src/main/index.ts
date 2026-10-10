@@ -3,11 +3,12 @@ import { app, BrowserWindow, ipcMain, session, shell, systemPreferences } from '
 import { loadEnv, parseEnvFile, userEnvPath, writeUserEnv } from '../core/config'
 import { fetchFundamentals, fetchHistory, fetchQuotes, hasEodhdKey, searchSymbols } from '../core/marketData'
 import { ChatSession } from '../core/session'
+import { polishTranscript } from '../core/polish'
 import { createVoiceSession, type VoiceSession } from '../core/voiceSession'
 import { WhisperServer, ensureModel, modelReady } from '../core/whisper'
 import type { BridgeCommand } from '../shared/bridgeProtocol'
 import type { IpcResult, Theme, VoiceEvent, VoiceLanguage, VoiceStatus, WatchlistEntry } from '../shared/types'
-import { applyTheme, getTheme, getVoiceLanguage, setTheme, setVoiceLanguage } from './preferences'
+import { applyTheme, getTheme, getVoiceLanguage, getVoicePolish, setTheme, setVoiceLanguage, setVoicePolish } from './preferences'
 import { readWatchlist, writeWatchlist } from './watchlist'
 
 let mainWindow: BrowserWindow | null = null
@@ -127,7 +128,8 @@ handle('voice:status', (): VoiceStatus => ({
   available: whisper.available(),
   modelReady: modelReady(),
   server: whisper.currentState(),
-  language: getVoiceLanguage()
+  language: getVoiceLanguage(),
+  polish: getVoicePolish()
 }))
 let preparing: Promise<void> | null = null
 handle('voice:prepare', () => {
@@ -167,6 +169,8 @@ handle('voice:set-language', (language: VoiceLanguage) => {
   setVoiceLanguage(language)
   whisper.language = language // applies from the next request
 })
+handle('voice:set-polish', (enabled: boolean) => setVoicePolish(enabled))
+handle('voice:polish', (text: string) => polishTranscript(text))
 handle('voice:cancel', () => {
   voice?.cancel()
   voice = null

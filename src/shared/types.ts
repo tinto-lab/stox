@@ -245,6 +245,8 @@ export interface VoiceStatus {
   server: ServerState
   /** The language dictation is pinned to ('auto' = detect it). */
   language: VoiceLanguage
+  /** Dictated text is cleaned up by the chat model when dictation ends. */
+  polish: boolean
 }
 
 /** The `window.stox` API the preload script exposes to the renderer. */
@@ -278,6 +280,9 @@ export interface StoxApi {
   /** Shuts the whisper server down (it starts again on demand). */
   voiceStopServer(): Promise<void>
   setVoiceLanguage(language: VoiceLanguage): Promise<void>
+  setVoicePolish(enabled: boolean): Promise<void>
+  /** Fixes recognition errors and punctuation in a dictated transcript. */
+  polishSpeech(text: string): Promise<string>
   voiceCancel(): void
   onVoiceEvent(listener: (event: VoiceEvent) => void): () => void
 }

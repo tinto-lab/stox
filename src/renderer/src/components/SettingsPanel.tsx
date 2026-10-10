@@ -80,6 +80,18 @@ function VoiceSection({ voice }: { voice: VoiceSetup }) {
             Pin the language you dictate in: auto-detection can guess wrong on a short phrase. Applies
             from the next phrase.
           </p>
+          <label className="voice-row">
+            <span>Polish speech</span>
+            <input
+              type="checkbox"
+              checked={status.polish}
+              onChange={(e) => void voice.setPolish(e.target.checked)}
+            />
+          </label>
+          <p className="panel-sheet-hint">
+            When dictation ends, the chat model corrects recognition errors and punctuation. The
+            transcript (text only, not audio) is sent to your chat provider.
+          </p>
           <p className="panel-sheet-hint">
             The engine starts when you open the chat and stops after 10 minutes without dictation.
           </p>

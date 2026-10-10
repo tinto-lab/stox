@@ -50,6 +50,8 @@ const stoxApi: StoxApi = {
     ipcRenderer.send('voice:push', samples)
   },
   setVoiceLanguage: (language: VoiceLanguage) => invoke<void>('voice:set-language', language),
+  setVoicePolish: (enabled: boolean) => invoke<void>('voice:set-polish', enabled),
+  polishSpeech: (text: string) => invoke<string>('voice:polish', text),
   voiceStopServer: () => invoke<void>('voice:stop-server'),
   voiceStop: () => invoke<void>('voice:stop'),
   voiceCancel(): void {

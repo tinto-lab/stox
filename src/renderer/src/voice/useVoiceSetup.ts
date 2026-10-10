@@ -76,6 +76,18 @@ export function useVoiceSetup(autoStart: boolean) {
     [refresh]
   )
 
+  const setPolish = useCallback(
+    async (enabled: boolean) => {
+      try {
+        await window.stox.setVoicePolish(enabled)
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+      }
+      await refresh()
+    },
+    [refresh]
+  )
+
   const canAutoStart = !!status?.available && status.modelReady && status.server === 'stopped'
   const autoTried = useRef(false)
   useEffect(() => {
@@ -93,7 +105,8 @@ export function useVoiceSetup(autoStart: boolean) {
     ready: !!status?.available && status.modelReady && status.server === 'running',
     prepare,
     stopServer,
-    setLanguage
+    setLanguage,
+    setPolish
   }
 }
 

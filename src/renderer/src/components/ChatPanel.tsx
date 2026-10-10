@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ConversationSummary, ViewContext } from '../../../shared/types'
 import { isComposing } from '../keys'
 import type { useBridge } from '../useBridge'
-import { useDictation } from '../voice/useDictation'
+import { joinSpoken, useDictation } from '../voice/useDictation'
 import { SERVER_LABELS, ServerDot } from '../voice/ServerDot'
 import type { VoiceSetup } from '../voice/useVoiceSetup'
 import { EnterIcon, WaveIcon } from './InputIcons'
@@ -166,14 +166,39 @@ export function ChatPanel({
   // Voice dictation. While it runs the textarea shows `base` + the words so
   // far (and is read-only); cancelling puts `base` back.
   const dictationBase = useRef('')
-  const dictation = useDictation(setDraft, (cancelled) => {
-    if (cancelled) setDraft(dictationBase.current)
+  const dictated = useRef('') // the full text as dictation last showed it
+  const [polishing, setPolishing] = useState(false)
+  const focusEnd = (): void => {
     const input = inputRef.current
     if (input) {
       input.focus()
       requestAnimationFrame(() => input.setSelectionRange(input.value.length, input.value.length))
     }
-  })
+  }
+  const dictation = useDictation(
+    (text) => {
+      dictated.current = text
+      setDraft(text)
+    },
+    (cancelled) => {
+      if (cancelled) setDraft(dictationBase.current)
+      focusEnd()
+      const base = dictationBase.current
+      const spoken = dictated.current.startsWith(base) ? dictated.current.slice(base.length).trim() : ''
+      if (cancelled || !voice.status?.polish || !spoken) return
+      // The box is locked while the model cleans the transcript; on any
+      // failure the raw text simply stays.
+      setPolishing(true)
+      window.stox
+        .polishSpeech(spoken)
+        .then((polished) => setDraft(joinSpoken(base, polished)))
+        .catch(() => {})
+        .finally(() => {
+          setPolishing(false)
+          focusEnd()
+        })
+    }
+  )
   const dictating = dictation.state !== 'idle'
   const settingUp = voice.phase !== 'idle'
   const startDictation = (base = draft): void => {
@@ -206,7 +231,7 @@ export function ChatPanel({
   }
 
   const submit = (): void => {
-    if (isBusy || dictating) return
+    if (isBusy || dictating || polishing) return
     routeInput(draft, bridge, openHistory, references.current)
     references.current.clear()
     setDraft('')
@@ -305,9 +330,9 @@ export function ChatPanel({
           ref={inputRef}
           value={draft}
           disabled={isBusy}
-          readOnly={dictating}
+          readOnly={dictating || polishing}
           rows={2}
-          placeholder={dictating ? 'Listening…' : 'Ask a question…'}
+          placeholder={dictating ? 'Listening…' : polishing ? 'Polishing…' : 'Ask a question…'}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={releaseSpace}
           onKeyUp={(e) => {
@@ -344,7 +369,7 @@ export function ChatPanel({
         <button
           type="button"
           className={`mic-button${dictation.state === 'listening' ? ' listening' : ''}`}
-          disabled={isBusy || !voice.status?.available || settingUp || dictation.state === 'finishing'}
+          disabled={isBusy || polishing || !voice.status?.available || settingUp || dictation.state === 'finishing'}
           aria-pressed={dictation.state === 'listening'}
           aria-label={dictating ? 'Stop dictation' : 'Dictate'}
           title={
