@@ -82,7 +82,8 @@ describe('rendering', () => {
         fundamentals: null
       })
     )
-    for (const title of ['trend', 'fundamentals', 'news', 'geopolitics', 'risk assessment']) expect(analysis).toContain(`─ ${title} `)
+    expect(analysis).toContain('─ risk assessment ')
+    for (const title of ['trend', 'fundamentals', 'news', 'geopolitics']) expect(analysis).not.toContain(`─ ${title} `)
     expect(analysis).toContain('not financial advice')
   })
 

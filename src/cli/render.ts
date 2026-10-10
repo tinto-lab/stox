@@ -189,13 +189,9 @@ export function showGeoNews(articles: GeoArticle[]): string {
   return table(rows, { gap: 1 }) + '\n'
 }
 
-/** The four specialist write-ups plus the aggregator's risk assessment. */
+/** The aggregator's risk assessment; the specialists' write-ups stay out of the terminal. */
 export function showAnalysis(result: AnalysisResult): string {
   return [
-    panel(result.trendText, 'trend'),
-    panel(result.fundamentalsText, 'fundamentals'),
-    panel(result.newsText, 'news'),
-    panel(result.geopoliticsText, 'geopolitics'),
     panel(result.verdictText, 'risk assessment', 'yellow'),
     dim('not financial advice -- for research purposes only.'),
     ''

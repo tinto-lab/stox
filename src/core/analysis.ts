@@ -209,9 +209,7 @@ export const AGGREGATOR_SYSTEM =
   "unavailable, work from the others and say briefly what's missing. Then give a clear verdict line " +
   '(Buy, Hold, or Sell) with a one-line reason, and a price outlook: a target price or range over ' +
   "roughly the next 3-6 months with your confidence (low/medium/high). Commit to a call -- don't hedge " +
-  'it away or refuse; the user sees a separate disclaimer. Weigh any standing considerations listed ' +
-  'below. Keep it tight: plain text, short bullet lines, no markdown headers -- the four source ' +
-  "analyses are shown to the user separately, so don't just repeat them."
+  'it away or refuse'
 
 /** Read fresh each run, so a consideration remembered mid-session applies immediately. */
 function aggregatorSystemPrompt(): string {
