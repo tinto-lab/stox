@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
-import { THEMES, type Theme } from '../../../shared/types'
+import { THEMES, VOICE_LANGUAGES, type Theme, type VoiceLanguage } from '../../../shared/types'
+import { SERVER_LABELS, ServerDot } from '../voice/ServerDot'
+import type { VoiceSetup } from '../voice/useVoiceSetup'
 
 const PROVIDERS = ['deepseek', 'openai'] as const
 
@@ -10,7 +12,93 @@ const CHAT_FIELDS = [
   { key: 'OPENAI_API_KEY', label: 'OpenAI API key' }
 ] as const
 
-export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+/** Voice dictation: the speech model and the engine (whisper server) that runs it. */
+function VoiceSection({ voice }: { voice: VoiceSetup }) {
+  const { status, phase, progress, error } = voice
+  if (!status) return null
+  const busy = phase !== 'idle'
+  return (
+    <>
+      <h3 className="settings-section">Voice dictation</h3>
+      <p className="panel-sheet-hint">
+        Speech is transcribed on this Mac with whisper.cpp; the audio never leaves it. Hold Space in the
+        chat input, or click its wave button, to dictate.
+      </p>
+      {!status.available ? (
+        <p className="panel-sheet-hint">Voice input isn't available: this build has no whisper engine.</p>
+      ) : (
+        <>
+          <div className="voice-row">
+            <span>Speech model</span>
+            {phase === 'downloading' ? (
+              <span className="voice-progress">
+                <progress value={progress} max={1} />
+                {Math.round(progress * 100)}%
+              </span>
+            ) : status.modelReady ? (
+              <span className="voice-value">Downloaded (about 60 MB)</span>
+            ) : (
+              <button type="button" className="primary" disabled={busy} onClick={() => void voice.prepare(false)}>
+                Download (about 60 MB)
+              </button>
+            )}
+          </div>
+          <div className="voice-row">
+            <span>Speech engine</span>
+            <span className="voice-value">
+              <ServerDot state={status.server} /> {SERVER_LABELS[status.server]}
+              {status.server === 'running' ? (
+                <button type="button" onClick={() => void voice.stopServer()}>
+                  Stop
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={busy || status.server === 'starting' || !status.modelReady}
+                  title={status.modelReady ? undefined : 'Download the speech model first'}
+                  onClick={() => void voice.prepare(true)}
+                >
+                  Start
+                </button>
+              )}
+            </span>
+          </div>
+          <label className="voice-row">
+            <span>Spoken language</span>
+            <select
+              value={status.language}
+              onChange={(e) => void voice.setLanguage(e.target.value as VoiceLanguage)}
+            >
+              {VOICE_LANGUAGES.map((l) => (
+                <option key={l.code} value={l.code}>
+                  {l.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="panel-sheet-hint">
+            Pin the language you dictate in: auto-detection can guess wrong on a short phrase. Applies
+            from the next phrase.
+          </p>
+          <p className="panel-sheet-hint">
+            The engine starts when you open the chat and stops after 10 minutes without dictation.
+          </p>
+          {error && <p className="voice-error">{error}</p>}
+        </>
+      )}
+    </>
+  )
+}
+
+export function SettingsPanel({
+  voice,
+  onClose,
+  onSaved
+}: {
+  voice: VoiceSetup
+  onClose: () => void
+  onSaved: () => void
+}) {
   const [values, setValues] = useState<Record<string, string>>({})
   const [loaded, setLoaded] = useState(false)
   const [theme, setTheme] = useState<Theme | null>(null)
@@ -56,6 +144,7 @@ export function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSav
             </div>
           </div>
         )}
+        <VoiceSection voice={voice} />
         <h3 className="settings-section">API keys</h3>
         <p className="panel-sheet-hint">
           Saved to ~/.config/stox/.env — the same file the terminal CLI reads, so a key set here

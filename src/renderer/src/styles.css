@@ -1182,3 +1182,148 @@ tr.missing {
   font-size: 12px;
 }
 
+
+
+.mic-button,
+.send-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-end;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 8px;
+}
+
+.mic-button svg,
+.send-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.mic-button {
+  color: var(--dim);
+  background: transparent;
+}
+
+.mic-button:hover:not(:disabled) {
+  color: var(--fg);
+}
+
+/* Listening: a red button with the wave bars dancing. */
+.mic-button.listening {
+  color: #fff;
+  background: #e5484d;
+  border-color: #e5484d;
+  animation: mic-pulse 1.4s ease-in-out infinite;
+}
+
+.mic-button.listening:hover:not(:disabled) {
+  background: #d93d42;
+  color: #fff;
+}
+
+.wave-icon.live line {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: wave-bar 0.9s ease-in-out infinite;
+}
+
+@keyframes wave-bar {
+  50% {
+    transform: scaleY(0.35);
+  }
+}
+
+@keyframes mic-pulse {
+  50% {
+    box-shadow: 0 0 0 4px rgba(229, 72, 77, 0.3);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wave-icon.live line,
+  .mic-button.listening {
+    animation: none;
+  }
+}
+
+/* -- voice status -- */
+
+.server-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--faint);
+  flex: none;
+}
+
+.server-dot.running {
+  background: var(--up);
+}
+
+.server-dot.starting {
+  background: #d97706;
+  animation: dot-pulse 1s ease-in-out infinite;
+}
+
+@keyframes dot-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.voice-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  min-height: 28px;
+}
+
+.voice-value,
+.voice-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--dim);
+}
+
+.voice-progress progress {
+  width: 140px;
+}
+
+.voice-error {
+  color: var(--error-fg);
+  background: var(--error-bg);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  margin: 0;
+}
+
+/* The light on the mic button. */
+.mic-button {
+  position: relative;
+}
+
+.mic-button .server-dot {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 7px;
+  height: 7px;
+  box-shadow: 0 0 0 1.5px var(--bg);
+}
+
+.voice-row select {
+  font: inherit;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  color: var(--fg);
+}

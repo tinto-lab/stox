@@ -207,6 +207,46 @@ export const THEMES = ['system', 'light', 'dark'] as const
 /** The app's appearance: follow macOS, or force light/dark. */
 export type Theme = (typeof THEMES)[number]
 
+/** What a dictation session reports while the user speaks. `partial` is the
+ * tentative text of the utterance in progress (each one replaces the last);
+ * `commit` is that utterance's final text; `done` ends the session. */
+/** Languages dictation can be pinned to; 'auto' lets whisper detect it. */
+export const VOICE_LANGUAGES = [
+  { code: 'auto', label: 'Auto-detect' },
+  { code: 'en', label: 'English' },
+  { code: 'zh', label: 'Chinese (中文)' },
+  { code: 'ja', label: 'Japanese (日本語)' },
+  { code: 'ko', label: 'Korean (한국어)' },
+  { code: 'es', label: 'Spanish (Español)' },
+  { code: 'fr', label: 'French (Français)' },
+  { code: 'de', label: 'German (Deutsch)' },
+  { code: 'pt', label: 'Portuguese (Português)' },
+  { code: 'it', label: 'Italian (Italiano)' },
+  { code: 'ru', label: 'Russian (Русский)' }
+] as const
+export type VoiceLanguage = (typeof VOICE_LANGUAGES)[number]['code']
+
+export type ServerState = 'stopped' | 'starting' | 'running'
+
+export type VoiceEvent =
+  | { type: 'partial'; text: string }
+  | { type: 'commit'; text: string }
+  | { type: 'done' }
+  | { type: 'error'; message: string }
+  | { type: 'model-progress'; fraction: number }
+  | { type: 'server'; state: ServerState }
+
+export interface VoiceStatus {
+  /** The bundled whisper binary is present. */
+  available: boolean
+  /** The speech model is downloaded. */
+  modelReady: boolean
+  /** Whether the whisper server is up; dictation can start only when it is. */
+  server: ServerState
+  /** The language dictation is pinned to ('auto' = detect it). */
+  language: VoiceLanguage
+}
+
 /** The `window.stox` API the preload script exposes to the renderer. */
 export interface StoxApi {
   // Market data -- fetched directly from EODHD/Yahoo by the main process.
@@ -224,4 +264,20 @@ export interface StoxApi {
   saveSettings(values: Record<string, string>): Promise<void>
   getTheme(): Promise<Theme>
   setTheme(theme: Theme): Promise<void>
+  // Voice dictation -- whisper.cpp running locally in the main process.
+  voiceStatus(): Promise<VoiceStatus>
+  /** Downloads the model if needed (progress arrives as events) and starts the
+   * server. Dictation can't start before this has resolved. */
+  voicePrepare(): Promise<void>
+  /** Opens a session; needs voicePrepare to have resolved. */
+  voiceStart(): Promise<void>
+  /** 16 kHz mono Int16 audio. */
+  voicePush(samples: Int16Array): void
+  /** Ends the session; resolves once the last text has been committed. */
+  voiceStop(): Promise<void>
+  /** Shuts the whisper server down (it starts again on demand). */
+  voiceStopServer(): Promise<void>
+  setVoiceLanguage(language: VoiceLanguage): Promise<void>
+  voiceCancel(): void
+  onVoiceEvent(listener: (event: VoiceEvent) => void): () => void
 }

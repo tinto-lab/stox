@@ -9,6 +9,9 @@ import type {
   StoxApi,
   SymbolMatch,
   Theme,
+  VoiceEvent,
+  VoiceLanguage,
+  VoiceStatus,
   WatchlistEntry
 } from '../shared/types'
 import type { BridgeCommand, BridgeEvent } from '../shared/bridgeProtocol'
@@ -40,6 +43,23 @@ const stoxApi: StoxApi = {
   saveSettings: (values: Record<string, string>) => invoke<void>('settings:save', values),
   getTheme: () => invoke<Theme>('appearance:get'),
   setTheme: (theme: Theme) => invoke<void>('appearance:set', theme),
+  voiceStatus: () => invoke<VoiceStatus>('voice:status'),
+  voicePrepare: () => invoke<void>('voice:prepare'),
+  voiceStart: () => invoke<void>('voice:start'),
+  voicePush(samples: Int16Array): void {
+    ipcRenderer.send('voice:push', samples)
+  },
+  setVoiceLanguage: (language: VoiceLanguage) => invoke<void>('voice:set-language', language),
+  voiceStopServer: () => invoke<void>('voice:stop-server'),
+  voiceStop: () => invoke<void>('voice:stop'),
+  voiceCancel(): void {
+    void ipcRenderer.invoke('voice:cancel')
+  },
+  onVoiceEvent(listener: (event: VoiceEvent) => void): () => void {
+    const handler = (_event: Electron.IpcRendererEvent, payload: VoiceEvent): void => listener(payload)
+    ipcRenderer.on('voice:event', handler)
+    return () => ipcRenderer.removeListener('voice:event', handler)
+  },
 }
 
 contextBridge.exposeInMainWorld('stox', stoxApi)
