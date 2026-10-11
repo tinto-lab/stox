@@ -1,4 +1,5 @@
 import { type Mock, vi } from 'vitest'
+import type { MarketData } from '../src/core/services'
 
 /**
  * Module mocks for the data sources, shared by the agent-level tests:
@@ -32,3 +33,13 @@ vi.mock('../src/core/webfetch', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   fetchArticleText: data.fetchArticleText
 }))
+
+/** The same mocks as a MarketData port, for tests that inject it. */
+export const market: MarketData = {
+  quotes: (tickers) => data.fetchQuotes(tickers),
+  bars: (ticker, days) => data.fetchBars(ticker, days),
+  news: (tickers, limit) => data.fetchNews(tickers, limit),
+  geoNews: (query, limit) => data.fetchGeoNews(query, limit),
+  fundamentals: (ticker) => data.fetchFundamentals(ticker),
+  articleText: (url) => data.fetchArticleText(url)
+}

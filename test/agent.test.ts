@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { data } from './mocks'
+import { data, market } from './mocks'
 import { AGENT_SYSTEM, MAX_AGENT_ROUNDS, MAX_HISTORY_TURNS, askAgent, formatViewContexts, recordAnalysis, trimHistory } from '../src/core/agent'
 import { formatAnalysisForAgent } from '../src/core/analysis'
 import { addConsideration, loadConsiderations } from '../src/core/considerations'
 import type { ChatMessage, ToolCall } from '../src/core/llm'
+import type { Services } from '../src/core/services'
 import { UNKNOWN_ARTICLE_URL_ERROR } from '../src/core/tools'
 import type { AnalysisResult, ViewContext } from '../src/shared/types'
 import { FakeLLM, RoutedLLM, article, bar, call, calls, fundamentals, geoArticle, quote, say } from './helpers'
@@ -265,5 +266,37 @@ describe('history', () => {
     const short: ChatMessage[] = [{ role: 'user', text: 'a' }]
     trimHistory(short)
     expect(short).toHaveLength(1)
+  })
+})
+
+describe('askAgent with injected services', () => {
+  it('uses the given market data and consideration store, touching neither the network nor the disk', async () => {
+    const stored: string[] = ['tariffs']
+    const quoteCalls: string[][] = []
+    const services: Services = {
+      market: {
+        ...market,
+        quotes: async (tickers) => {
+          quoteCalls.push(tickers)
+          return { quotes: [quote()], missing: [] }
+        }
+      },
+      considerations: {
+        location: 'memory',
+        list: () => [...stored],
+        add: (text) => void stored.push(text),
+        remove: (text) => stored.filter((c) => c !== text)
+      }
+    }
+    const llm = new FakeLLM([
+      calls(call('get_stock_quote', { tickers: ['AAPL'] }), call('remember_consideration', { text: 'insider selling' })),
+      say('AAPL is up.')
+    ])
+    const result = await askAgent(llm, 'apple?', [], {}, services)
+    expect(result.text).toBe('AAPL is up.')
+    expect(quoteCalls).toEqual([['AAPL']])
+    expect(stored).toEqual(['tariffs', 'insider selling'])
+    expect(llm.requests[0].system).toContain('- tariffs')
+    expect(loadConsiderations()).toEqual([]) // the real store was never written
   })
 })

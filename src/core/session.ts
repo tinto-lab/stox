@@ -3,9 +3,9 @@ import type { ChatStatus } from '../shared/types'
 import { normalize } from '../shared/symbols'
 import { askAgent, recordAnalysis } from './agent'
 import { runStockAnalysis } from './analysis'
-import { addConsideration, loadConsiderations, removeConsideration } from './considerations'
 import { Conversation, type Titler, listConversations, modelTitler } from './conversations'
 import {
+  type ChatModel,
   buildLLM,
   currentProviderName,
   describeCurrent,
@@ -14,7 +14,8 @@ import {
   thinkingSetting,
   thinkingSupported
 } from './llm'
-import { fetchQuotes, hasEodhdKey } from './marketData'
+import { hasEodhdKey } from './marketData'
+import { type Services, defaultServices } from './services'
 
 /**
  * One chat conversation, driven by BridgeCommands and answering with
@@ -33,13 +34,19 @@ export class ChatSession {
   private abort = new AbortController()
 
   private readonly titler: Titler
+  private readonly services: Services
+  private readonly buildModel: () => ChatModel
 
-  /** `titler` names each new conversation; tests pass a stand-in for the model. */
+  /** `titler` names each new conversation, `services` is the data and
+   * storage the agents use, `buildModel` makes the model for each command;
+   * tests pass stand-ins, the app the real ones. */
   constructor(
     private readonly emit: (event: BridgeEvent) => void,
-    options: { titler?: Titler } = {}
+    options: { titler?: Titler; services?: Services; buildModel?: () => ChatModel } = {}
   ) {
     this.titler = options.titler ?? modelTitler
+    this.services = options.services ?? defaultServices
+    this.buildModel = options.buildModel ?? buildLLM
   }
 
   handle(command: BridgeCommand): void {
@@ -91,7 +98,7 @@ export class ChatSession {
     switch (command.cmd) {
       case 'ask': {
         const conversation = this.conversation
-        const data = await askAgent(buildLLM(), command.text, conversation.history, {
+        const data = await askAgent(this.buildModel(), command.text, conversation.history, {
           signal,
           contexts: command.contexts,
           onToolCall: (name, args) => this.emit({ id, type: 'tool_call', name, args }),
@@ -99,9 +106,12 @@ export class ChatSession {
           onAnalysisToolCall: (agent, name, args) => this.emit({ id, type: 'specialist_tool_call', agent, name, args }),
           onReasoningStep: () => reasoningStep(null),
           onReasoning: (delta) => reasoning(null, delta),
+          onText: (delta) => {
+            if (!signal.aborted) this.emit({ id, type: 'text', delta })
+          },
           onAnalysisReasoningStep: reasoningStep,
           onAnalysisReasoning: reasoning
-        })
+        }, this.services)
         if (signal.aborted) return
         result(data)
         // Not awaited: naming a new conversation takes a model call, and the
@@ -113,19 +123,24 @@ export class ChatSession {
         return
       }
       case 'analyze': {
-        const data = await runStockAnalysis(buildLLM(), command.ticker, {
-          signal,
-          onAgentStart: (name) => this.emit({ id, type: 'specialist_start', name }),
-          onToolCall: (agent, name, args) => this.emit({ id, type: 'specialist_tool_call', agent, name, args }),
-          onReasoningStep: reasoningStep,
-          onReasoning: reasoning
-        })
+        const data = await runStockAnalysis(
+          this.buildModel(),
+          command.ticker,
+          {
+            signal,
+            onAgentStart: (name) => this.emit({ id, type: 'specialist_start', name }),
+            onToolCall: (agent, name, args) => this.emit({ id, type: 'specialist_tool_call', agent, name, args }),
+            onReasoningStep: reasoningStep,
+            onReasoning: reasoning
+          },
+          this.services
+        )
         if (signal.aborted) return
         recordAnalysis(this.conversation.history, normalize(command.ticker), data)
         return result(data)
       }
       case 'quote':
-        return result(await fetchQuotes(command.tickers))
+        return result(await this.services.market.quotes(command.tickers))
       case 'reset':
         this.conversation = new Conversation()
         return result({})
@@ -136,12 +151,12 @@ export class ChatSession {
         return result({ ...this.conversation.summary, turns: [...this.conversation.turns] })
       }
       case 'considerations_list':
-        return result({ considerations: loadConsiderations() })
+        return result({ considerations: this.services.considerations.list() })
       case 'considerations_add':
-        addConsideration(command.text)
-        return result({ considerations: loadConsiderations() })
+        this.services.considerations.add(command.text)
+        return result({ considerations: this.services.considerations.list() })
       case 'considerations_remove':
-        return result({ considerations: removeConsideration(command.text) })
+        return result({ considerations: this.services.considerations.remove(command.text) })
       case 'status':
         return result(chatStatus())
       case 'set_thinking':

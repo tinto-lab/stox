@@ -189,6 +189,20 @@ describe('ChatSession', () => {
     })
   })
 
+  it('streams the answer text as text events before the result', async () => {
+    llmHolder.current = new FakeLLM([
+      (req: { onText?: (d: string) => void }) => {
+        req.onText?.('AAPL is ')
+        req.onText?.('up.')
+        return say('AAPL is up.')
+      }
+    ])
+    const { chat, events, settle } = session()
+    chat.handle({ id: 'a', cmd: 'ask', text: 'apple?' })
+    await settle()
+    expect(events.map((e) => (e.type === 'text' ? `text:${e.delta}` : e.type))).toEqual(['text:AAPL is ', 'text:up.', 'result'])
+  })
+
   it('streams reasoning events, numbered per model call and attributed to the agent', async () => {
     process.env.STOX_LLM_PROVIDER = 'deepseek'
     process.env.STOX_LLM_THINKING = 'on'

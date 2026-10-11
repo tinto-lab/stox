@@ -1,20 +1,8 @@
 import type { AgentResult, AnalysisResult, ViewContext } from '../shared/types'
 import { ANALYZE_STOCK_SPEC, type AnalysisCallbacks, formatAnalysisForAgent, runStockAnalysis } from './analysis'
-import { addConsideration, loadConsiderations } from './considerations'
-import { type ChatMessage, type ChatModel, type Dispatch, type OnToolCall, type ToolSpec, runToolLoop } from './llm'
-import {
-  TOOL_SPECS,
-  UNKNOWN_ARTICLE_URL_ERROR,
-  argNumber,
-  argString,
-  argStrings,
-  runFundamentalsTool,
-  runGeoNewsTool,
-  runHistoryTool,
-  runNewsTool,
-  runQuoteTool,
-  runReadArticleTool
-} from './tools'
+import { type ChatMessage, type ChatModel, type OnToolCall, runToolLoop } from './llm'
+import { type ConsiderationStore, type Services, defaultServices } from './services'
+import { DATA_TOOLS, type Tool, type ToolContext, argString, toolDispatch } from './tools'
 
 /**
  * The chat agent: resolves a plain-English question ("what's apple trading
@@ -39,8 +27,8 @@ export const AGENT_SYSTEM =
 
 /** AGENT_SYSTEM plus the standing considerations, read fresh each turn so
  * one remembered mid-session applies to this session's later turns too. */
-function systemPrompt(): string {
-  const considerations = loadConsiderations()
+function systemPrompt(store: ConsiderationStore): string {
+  const considerations = store.list()
   if (!considerations.length) return AGENT_SYSTEM
   return (
     `${AGENT_SYSTEM}\n\nStanding considerations the user has asked you to always weigh when explaining ` +
@@ -49,28 +37,15 @@ function systemPrompt(): string {
   )
 }
 
-const AGENT_TOOL_SPECS: Record<string, ToolSpec> = {
-  remember_consideration: {
-    name: 'remember_consideration',
-    description:
-      'Permanently remember a factor to always weigh when explaining why a price might be moving or ' +
-      'assessing risk for a security.\n\nThis persists across sessions, not just this conversation. Call ' +
-      'it when the user says something like "always consider X", "keep Y in mind when talking about ' +
-      'risk", or "remember this for next time" -- not for one-off facts that aren\'t standing instructions.',
-    parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] }
-  }
+const REMEMBER_CONSIDERATION_SPEC = {
+  name: 'remember_consideration',
+  description:
+    'Permanently remember a factor to always weigh when explaining why a price might be moving or ' +
+    'assessing risk for a security.\n\nThis persists across sessions, not just this conversation. Call ' +
+    'it when the user says something like "always consider X", "keep Y in mind when talking about ' +
+    'risk", or "remember this for next time" -- not for one-off facts that aren\'t standing instructions.',
+  parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] }
 }
-
-const ALL_TOOLS: ToolSpec[] = [
-  TOOL_SPECS.get_stock_quote,
-  TOOL_SPECS.get_stock_news,
-  TOOL_SPECS.get_geopolitical_news,
-  TOOL_SPECS.get_price_history,
-  TOOL_SPECS.get_company_fundamentals,
-  ANALYZE_STOCK_SPEC,
-  TOOL_SPECS.read_article,
-  ...Object.values(AGENT_TOOL_SPECS)
-]
 
 export const MAX_HISTORY_TURNS = 6
 
@@ -151,6 +126,8 @@ export interface AskCallbacks {
    * in (DeepSeek thinking mode). */
   onReasoningStep?: () => void
   onReasoning?: (delta: string) => void
+  /** The answer text as it streams in. */
+  onText?: (delta: string) => void
   /** The same, from the specialists when the model calls analyze_stock. */
   onAnalysisReasoningStep?: AnalysisCallbacks['onReasoningStep']
   onAnalysisReasoning?: AnalysisCallbacks['onReasoning']
@@ -167,7 +144,8 @@ export async function askAgent(
   llm: ChatModel,
   query: string,
   history: ChatMessage[] = [],
-  callbacks: AskCallbacks = {}
+  callbacks: AskCallbacks = {},
+  services: Services = defaultServices
 ): Promise<AgentResult> {
   const result: AgentResult = {
     text: '',
@@ -180,78 +158,70 @@ export async function askAgent(
   }
   // Only urls a news tool actually returned (this turn or one still in
   // history) may be read -- the model can't direct a fetch of any url.
-  const knownUrls = articleUrlsIn(history)
+  const ctx: ToolContext = { market: services.market, knownUrls: articleUrlsIn(history) }
 
-  const dispatch: Dispatch = async (name, args) => {
-    switch (name) {
-      case 'get_stock_quote': {
-        const [text] = await runQuoteTool(argStrings(args, 'tickers'))
-        return text
-      }
-      case 'get_stock_news': {
-        const [text, articles] = await runNewsTool(argStrings(args, 'tickers'), argNumber(args, 'limit', 5))
-        for (const a of articles) if (a.link) knownUrls.add(a.link)
-        return text
-      }
-      case 'get_geopolitical_news': {
-        const [text, articles] = await runGeoNewsTool(argString(args, 'query'), argNumber(args, 'limit', 5))
-        for (const a of articles) if (a.link) knownUrls.add(a.link)
-        return text
-      }
-      case 'get_price_history': {
-        const [text] = await runHistoryTool(argString(args, 'ticker'), argNumber(args, 'days', 30))
-        return text
-      }
-      case 'get_company_fundamentals': {
-        const [text] = await runFundamentalsTool(argString(args, 'ticker'))
-        return text
-      }
-      case 'analyze_stock': {
-        let analysis: AnalysisResult
-        try {
-          analysis = await runStockAnalysis(llm, argString(args, 'ticker'), {
+  const analyzeStock: Tool = {
+    spec: ANALYZE_STOCK_SPEC,
+    async run(args) {
+      let analysis: AnalysisResult
+      try {
+        analysis = await runStockAnalysis(
+          llm,
+          argString(args, 'ticker'),
+          {
             onAgentStart: callbacks.onAnalysisAgentStart,
             onToolCall: callbacks.onAnalysisToolCall,
             onReasoningStep: callbacks.onAnalysisReasoningStep,
             onReasoning: callbacks.onAnalysisReasoning,
             signal: callbacks.signal
-          })
-        } catch (e) {
-          callbacks.signal?.throwIfAborted()
-          return `error: analysis error: ${e instanceof Error ? e.message : String(e)}`
-        }
-        result.analysis = analysis
-        for (const a of [...analysis.articles, ...analysis.geoArticles]) if (a.link) knownUrls.add(a.link)
-        return formatAnalysisForAgent(analysis)
+          },
+          services
+        )
+      } catch (e) {
+        callbacks.signal?.throwIfAborted()
+        return { text: `error: analysis error: ${e instanceof Error ? e.message : String(e)}` }
       }
-      case 'read_article': {
-        const url = argString(args, 'url')
-        return knownUrls.has(url) ? runReadArticleTool(url) : UNKNOWN_ARTICLE_URL_ERROR
-      }
-      case 'remember_consideration': {
-        const text = argString(args, 'text').trim()
-        if (!text) return 'error: nothing to remember'
-        addConsideration(text)
-        return `remembered: ${text}`
-      }
-      default:
-        return 'unknown tool'
+      result.analysis = analysis
+      for (const a of [...analysis.articles, ...analysis.geoArticles]) if (a.link) ctx.knownUrls.add(a.link)
+      return { text: formatAnalysisForAgent(analysis) }
     }
   }
+
+  const rememberConsideration: Tool = {
+    spec: REMEMBER_CONSIDERATION_SPEC,
+    async run(args) {
+      const text = argString(args, 'text').trim()
+      if (!text) return { text: 'error: nothing to remember' }
+      services.considerations.add(text)
+      return { text: `remembered: ${text}` }
+    }
+  }
+
+  const tools: Tool[] = [
+    DATA_TOOLS.get_stock_quote,
+    DATA_TOOLS.get_stock_news,
+    DATA_TOOLS.get_geopolitical_news,
+    DATA_TOOLS.get_price_history,
+    DATA_TOOLS.get_company_fundamentals,
+    analyzeStock,
+    DATA_TOOLS.read_article,
+    rememberConsideration
+  ]
 
   const text = callbacks.contexts?.length ? `${query}\n\n${formatViewContexts(callbacks.contexts)}` : query
   const messages: ChatMessage[] = [...history, { role: 'user', text }]
   result.text = await runToolLoop({
     llm,
-    system: systemPrompt(),
+    system: systemPrompt(services.considerations),
     messages,
-    tools: ALL_TOOLS,
-    dispatch,
+    tools: tools.map((tool) => tool.spec),
+    dispatch: toolDispatch(tools, ctx),
     maxRounds: MAX_AGENT_ROUNDS,
     budgetExhaustedNotice: BUDGET_EXHAUSTED_NOTICE,
     onToolCall: callbacks.onToolCall,
     onStep: callbacks.onReasoningStep,
     onReasoning: callbacks.onReasoning,
+    onText: callbacks.onText,
     signal: callbacks.signal
   })
 

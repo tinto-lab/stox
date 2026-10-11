@@ -1,9 +1,8 @@
 import { normalize } from '../shared/symbols'
-import type { Article, Bar, Fundamentals, GeoArticle, Quote } from '../shared/types'
-import { fetchGeoNews, isRedirectLink, mapLimit } from './gnews'
-import type { ToolSpec } from './llm'
-import { fetchBars, fetchFundamentals, fetchNews, fetchQuotes } from './marketData'
-import { fetchArticleText } from './webfetch'
+import type { AnalysisResult, Article, Bar, Fundamentals, GeoArticle, Quote } from '../shared/types'
+import { isRedirectLink, mapLimit } from './gnews'
+import type { Dispatch, ToolSpec } from './llm'
+import type { MarketData } from './services'
 
 /**
  * The data-lookup tools: quotes, news, price history, fundamentals,
@@ -14,6 +13,10 @@ import { fetchArticleText } from './webfetch'
  * Each run* function returns the tool-result text the model sees plus the
  * data itself, which the UI renders. Failures come back as "error: ..."
  * text rather than throwing, so the model can work around them.
+ *
+ * A Tool bundles a spec with its implementation, so an agent is given a
+ * list of Tools and toolDispatch() routes calls to them -- adding a tool
+ * means adding an entry here, not editing every agent's dispatcher.
  */
 
 const MAX_ARTICLE_FETCH_WORKERS = 5
@@ -26,7 +29,7 @@ const signed = (v: number): string => `${v >= 0 ? '+' : ''}${v.toFixed(2)}`
 
 const tickersParam = { type: 'array', items: { type: 'string' } }
 
-export const TOOL_SPECS = {
+const TOOL_SPECS = {
   get_stock_quote: {
     name: 'get_stock_quote',
     description:
@@ -117,22 +120,22 @@ export function argStrings(args: Record<string, unknown>, key: string): string[]
 
 /** Full article text per link, fetched concurrently; null where it fails,
  * so callers fall back to the provider's own summary for that one. */
-async function fetchBodies(links: string[]): Promise<(string | null)[]> {
+async function fetchBodies(market: MarketData, links: string[]): Promise<(string | null)[]> {
   return mapLimit(links, MAX_ARTICLE_FETCH_WORKERS, async (link) => {
     if (!link || isRedirectLink(link)) return null
     try {
-      return await fetchArticleText(link)
+      return await market.articleText(link)
     } catch {
       return null
     }
   })
 }
 
-export async function runQuoteTool(tickers: string[]): Promise<[string, Quote[]]> {
+export async function runQuoteTool(market: MarketData, tickers: string[]): Promise<[string, Quote[]]> {
   if (!tickers.length) return ['error: no tickers given', []]
   let result
   try {
-    result = await fetchQuotes(tickers)
+    result = await market.quotes(tickers)
   } catch (e) {
     return [errorText(e), []]
   }
@@ -147,10 +150,10 @@ export async function runQuoteTool(tickers: string[]): Promise<[string, Quote[]]
 
 /** A summary plus the latest bar, not every row, so a long lookback
  * doesn't flood the model with raw numbers. */
-export async function runHistoryTool(ticker: string, days = 30): Promise<[string, Bar[]]> {
+export async function runHistoryTool(market: MarketData, ticker: string, days = 30): Promise<[string, Bar[]]> {
   let bars: Bar[]
   try {
-    bars = await fetchBars(ticker, days)
+    bars = await market.bars(ticker, days)
   } catch (e) {
     return [errorText(e), []]
   }
@@ -172,10 +175,10 @@ export async function runHistoryTool(ticker: string, days = 30): Promise<[string
   return [`${summary}\n${latest}`, bars]
 }
 
-export async function runFundamentalsTool(ticker: string): Promise<[string, Fundamentals | null]> {
+export async function runFundamentalsTool(market: MarketData, ticker: string): Promise<[string, Fundamentals | null]> {
   let f: Fundamentals
   try {
-    f = await fetchFundamentals(ticker)
+    f = await market.fundamentals(ticker)
   } catch (e) {
     return [errorText(e), null]
   }
@@ -193,32 +196,32 @@ export async function runFundamentalsTool(ticker: string): Promise<[string, Fund
 
 /** Each article block carries its full text (fetched from its own url),
  * falling back to the provider's summary where the fetch fails. */
-export async function runNewsTool(tickers: string[], limit = 5): Promise<[string, Article[]]> {
+export async function runNewsTool(market: MarketData, tickers: string[], limit = 5): Promise<[string, Article[]]> {
   if (!tickers.length) return ['error: no tickers given', []]
   let articles: Article[]
   try {
-    articles = await fetchNews(tickers, limit)
+    articles = await market.news(tickers, limit)
   } catch (e) {
     return [errorText(e), []]
   }
   if (!articles.length) return ['no recent news found', []]
-  const bodies = await fetchBodies(articles.map((a) => a.link))
+  const bodies = await fetchBodies(market, articles.map((a) => a.link))
   const blocks = articles.map(
     (a, i) => `date: ${(a.date || '').slice(0, 10)}\ntitle: ${a.title}\nurl: ${a.link}\ntext: ${bodies[i] || a.summary}`
   )
   return [blocks.join('\n---\n'), articles]
 }
 
-export async function runGeoNewsTool(query: string, limit = 5): Promise<[string, GeoArticle[]]> {
+export async function runGeoNewsTool(market: MarketData, query: string, limit = 5): Promise<[string, GeoArticle[]]> {
   if (!query.trim()) return ['error: no query given', []]
   let articles: GeoArticle[]
   try {
-    articles = await fetchGeoNews(query, limit)
+    articles = await market.geoNews(query, limit)
   } catch (e) {
     return [errorText(e), []]
   }
   if (!articles.length) return ['no relevant world news found', []]
-  const bodies = await fetchBodies(articles.map((a) => a.link))
+  const bodies = await fetchBodies(market, articles.map((a) => a.link))
   const blocks = articles.map(
     (a, i) =>
       `date: ${(a.date || '').slice(0, 10)}\ncountry: ${a.country || '?'}\nsentiment: ${a.sentiment || '?'}\n` +
@@ -227,10 +230,133 @@ export async function runGeoNewsTool(query: string, limit = 5): Promise<[string,
   return [blocks.join('\n---\n'), articles]
 }
 
-export async function runReadArticleTool(url: string): Promise<string> {
+export async function runReadArticleTool(market: MarketData, url: string): Promise<string> {
   try {
-    return await fetchArticleText(url)
+    return await market.articleText(url)
   } catch (e) {
     return errorText(e)
+  }
+}
+
+// -- tools: spec + implementation --
+
+/** The pieces of an AnalysisResult that tool data can fill in. */
+export type ToolArtifacts = Pick<AnalysisResult, 'quotes' | 'bars' | 'fundamentals' | 'articles' | 'geoArticles'>
+
+export interface ToolContext {
+  market: MarketData
+  /** Article urls a news tool has returned (in this run, or an earlier turn
+   * of the conversation) -- the only ones read_article will fetch. */
+  knownUrls: Set<string>
+  /** The ticker a specialist is about: fills in arguments the model left out. */
+  ticker?: string
+  /** How far back get_price_history looks when the model gives no `days`. */
+  historyDays?: number
+}
+
+export interface ToolOutcome {
+  /** What the model sees. */
+  text: string
+  /** The data behind it, for the UI. */
+  data?: unknown
+}
+
+export interface Tool {
+  spec: ToolSpec
+  /** Which AnalysisResult field this tool's data fills, if any. */
+  produces?: keyof ToolArtifacts
+  run(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome>
+}
+
+const tickersOf = (args: Record<string, unknown>, ctx: ToolContext): string[] => {
+  const tickers = argStrings(args, 'tickers')
+  return tickers.length ? tickers : ctx.ticker ? [ctx.ticker] : []
+}
+const tickerOf = (args: Record<string, unknown>, ctx: ToolContext): string => argString(args, 'ticker') || ctx.ticker || ''
+const remember = (ctx: ToolContext, articles: { link: string }[]): void => {
+  for (const a of articles) if (a.link) ctx.knownUrls.add(a.link)
+}
+
+const quoteTool: Tool = {
+  spec: TOOL_SPECS.get_stock_quote,
+  produces: 'quotes',
+  async run(args, ctx) {
+    const [text, data] = await runQuoteTool(ctx.market, tickersOf(args, ctx))
+    return { text, data }
+  }
+}
+
+const historyTool: Tool = {
+  spec: TOOL_SPECS.get_price_history,
+  produces: 'bars',
+  async run(args, ctx) {
+    const [text, data] = await runHistoryTool(ctx.market, tickerOf(args, ctx), argNumber(args, 'days', ctx.historyDays ?? 30))
+    return { text, data }
+  }
+}
+
+const fundamentalsTool: Tool = {
+  spec: TOOL_SPECS.get_company_fundamentals,
+  produces: 'fundamentals',
+  async run(args, ctx) {
+    const [text, data] = await runFundamentalsTool(ctx.market, tickerOf(args, ctx))
+    return { text, data }
+  }
+}
+
+const newsTool: Tool = {
+  spec: TOOL_SPECS.get_stock_news,
+  produces: 'articles',
+  async run(args, ctx) {
+    const [text, data] = await runNewsTool(ctx.market, tickersOf(args, ctx), argNumber(args, 'limit', 5))
+    remember(ctx, data)
+    return { text, data }
+  }
+}
+
+const geoNewsTool: Tool = {
+  spec: TOOL_SPECS.get_geopolitical_news,
+  produces: 'geoArticles',
+  async run(args, ctx) {
+    const [text, data] = await runGeoNewsTool(ctx.market, argString(args, 'query') || ctx.ticker || '', argNumber(args, 'limit', 5))
+    remember(ctx, data)
+    return { text, data }
+  }
+}
+
+const readArticleTool: Tool = {
+  spec: TOOL_SPECS.read_article,
+  async run(args, ctx) {
+    const url = argString(args, 'url')
+    return { text: ctx.knownUrls.has(url) ? await runReadArticleTool(ctx.market, url) : UNKNOWN_ARTICLE_URL_ERROR }
+  }
+}
+
+/** Every data tool by name; agents pick the ones they use. */
+export const DATA_TOOLS = {
+  get_stock_quote: quoteTool,
+  get_price_history: historyTool,
+  get_company_fundamentals: fundamentalsTool,
+  get_stock_news: newsTool,
+  get_geopolitical_news: geoNewsTool,
+  read_article: readArticleTool
+} as const satisfies Record<string, Tool>
+
+/**
+ * Routes the model's tool calls to `tools`; an unknown name gets an "unknown
+ * tool" reply. `onOutcome` sees each result, for collecting the data behind it.
+ */
+export function toolDispatch(
+  tools: Tool[],
+  ctx: ToolContext,
+  onOutcome?: (tool: Tool, outcome: ToolOutcome) => void
+): Dispatch {
+  const byName = new Map(tools.map((tool) => [tool.spec.name, tool]))
+  return async (name, args) => {
+    const tool = byName.get(name)
+    if (!tool) return 'unknown tool'
+    const outcome = await tool.run(args, ctx)
+    onOutcome?.(tool, outcome)
+    return outcome.text
   }
 }

@@ -1,19 +1,7 @@
-import type { AnalysisResult, Article, Bar, Fundamentals, GeoArticle, Quote } from '../shared/types'
-import { loadConsiderations } from './considerations'
-import { type ChatModel, type Dispatch, type ToolLoopOptions, type ToolSpec, runToolLoop } from './llm'
-import {
-  TOOL_SPECS,
-  UNKNOWN_ARTICLE_URL_ERROR,
-  argNumber,
-  argString,
-  argStrings,
-  runFundamentalsTool,
-  runGeoNewsTool,
-  runHistoryTool,
-  runNewsTool,
-  runQuoteTool,
-  runReadArticleTool
-} from './tools'
+import type { AnalysisResult } from '../shared/types'
+import { type ChatModel, type ToolLoopOptions, type ToolSpec, runToolLoop } from './llm'
+import { type ConsiderationStore, type Services, defaultServices } from './services'
+import { DATA_TOOLS, type Tool, type ToolArtifacts, type ToolContext, toolDispatch } from './tools'
 
 /**
  * Multi-agent stock analysis: trend, fundamentals, news and geopolitics
@@ -32,8 +20,6 @@ const BUDGET_EXHAUSTED_NOTICE =
   "You've used up your tool-call budget. Answer now, in 2-4 sentences, using only what you've " +
   'already found above -- no more tool calls.'
 
-export type SpecialistName = 'trend' | 'fundamentals' | 'news' | 'geopolitics'
-
 export interface AnalysisCallbacks {
   /** Called with each stage's name: the four specialists together as they
    * start (they run concurrently), then "aggregator" once they're done. */
@@ -47,32 +33,8 @@ export interface AnalysisCallbacks {
   signal?: AbortSignal
 }
 
-/** MAX_TOOL_ROUNDS counts model calls, not tool calls: a model that reads
- * articles one at a time can spend every round on tools. Rather than
- * render that as "no answer", the budget running out forces one last call
- * with tools forbidden, so it writes up what it already gathered. */
 /** One specialist's progress callbacks and cancellation, already bound to it. */
 type SpecialistHooks = Pick<ToolLoopOptions, 'onToolCall' | 'onStep' | 'onReasoning' | 'signal'>
-
-function runSpecialist(
-  llm: ChatModel,
-  system: string,
-  tools: ToolSpec[],
-  prompt: string,
-  dispatch: Dispatch,
-  hooks: SpecialistHooks
-): Promise<string> {
-  return runToolLoop({
-    llm,
-    system,
-    messages: [{ role: 'user', text: prompt }],
-    tools,
-    dispatch,
-    maxRounds: MAX_TOOL_ROUNDS,
-    budgetExhaustedNotice: BUDGET_EXHAUSTED_NOTICE,
-    ...hooks
-  })
-}
 
 const NO_VERDICT = "Don't give a buy/sell verdict -- that's someone else's job."
 
@@ -82,79 +44,14 @@ export const TREND_AGENT_SYSTEM =
   "get_stock_quote for today's price and change. In 2-4 sentences, describe the trend: direction, " +
   'momentum, volatility, and where the price sits versus its recent high/low range. ' + NO_VERDICT
 
-async function runTrendAgent(llm: ChatModel, ticker: string, hooks: SpecialistHooks) {
-  let quotes: Quote[] = []
-  let bars: Bar[] = []
-  const dispatch: Dispatch = async (name, args) => {
-    if (name === 'get_stock_quote') {
-      const tickers = argStrings(args, 'tickers')
-      const [text, found] = await runQuoteTool(tickers.length ? tickers : [ticker])
-      if (found.length) quotes = found
-      return text
-    }
-    if (name === 'get_price_history') {
-      const [text, found] = await runHistoryTool(argString(args, 'ticker') || ticker, argNumber(args, 'days', 90))
-      if (found.length) bars = found
-      return text
-    }
-    return 'unknown tool'
-  }
-  const text = await runSpecialist(
-    llm, TREND_AGENT_SYSTEM, [TOOL_SPECS.get_stock_quote, TOOL_SPECS.get_price_history],
-    `Analyze the price trend for ${ticker}.`, dispatch, hooks
-  )
-  return { text, quotes, bars }
-}
-
 export const FUNDAMENTALS_AGENT_SYSTEM =
   "You are stox's fundamentals analyst. Given a ticker, call get_company_fundamentals and assess the " +
   "company's profitability and valuation in 2-4 sentences: margins, EBITDA, revenue/earnings growth, " +
   'and whether the valuation (P/E, PEG) looks rich or cheap. ' + NO_VERDICT
 
-async function runFundamentalsAgent(llm: ChatModel, ticker: string, hooks: SpecialistHooks) {
-  let fundamentals: Fundamentals | null = null
-  const dispatch: Dispatch = async (name, args) => {
-    if (name === 'get_company_fundamentals') {
-      const [text, found] = await runFundamentalsTool(argString(args, 'ticker') || ticker)
-      fundamentals = found ?? fundamentals
-      return text
-    }
-    return 'unknown tool'
-  }
-  const text = await runSpecialist(
-    llm, FUNDAMENTALS_AGENT_SYSTEM, [TOOL_SPECS.get_company_fundamentals],
-    `Analyze the fundamentals for ${ticker}.`, dispatch, hooks
-  )
-  return { text, fundamentals: fundamentals as Fundamentals | null }
-}
-
 export const NEWS_AGENT_SYSTEM =
   "You are stox's news analyst. Given a ticker, call get_stock_news and summarize in 2-4 sentences the " +
   'sentiment and any notable catalysts or risks. ' + NO_VERDICT
-
-async function runNewsAgent(llm: ChatModel, ticker: string, hooks: SpecialistHooks) {
-  let articles: Article[] = []
-  const knownUrls = new Set<string>()
-  const dispatch: Dispatch = async (name, args) => {
-    if (name === 'get_stock_news') {
-      const tickers = argStrings(args, 'tickers')
-      const [text, found] = await runNewsTool(tickers.length ? tickers : [ticker], argNumber(args, 'limit', 5))
-      if (found.length) articles = found
-      for (const a of found) if (a.link) knownUrls.add(a.link)
-      return text
-    }
-    if (name === 'read_article') {
-      const url = argString(args, 'url')
-      return knownUrls.has(url) ? runReadArticleTool(url) : UNKNOWN_ARTICLE_URL_ERROR
-    }
-    return 'unknown tool'
-  }
-  const text = await runSpecialist(
-    llm, NEWS_AGENT_SYSTEM, [TOOL_SPECS.get_stock_news, TOOL_SPECS.read_article],
-    `Analyze recent news for ${ticker}.`, dispatch, hooks
-  )
-  return { text, articles }
-}
 
 export const MAX_GEO_SEARCHES = 3
 
@@ -171,32 +68,116 @@ export const GEO_SEARCH_BUDGET_NOTICE =
   `error: you've used up your ${MAX_GEO_SEARCHES} searches for this run -- work with what you already ` +
   'have instead of searching again'
 
-async function runGeopoliticsAgent(llm: ChatModel, ticker: string, hooks: SpecialistHooks) {
-  let articles: GeoArticle[] = []
-  const knownUrls = new Set<string>()
-  let searches = 0
-  const dispatch: Dispatch = async (name, args) => {
-    if (name === 'get_geopolitical_news') {
-      // Counted before the first await: a turn's calls are dispatched
-      // concurrently, and each must see the ones before it.
-      if (searches >= MAX_GEO_SEARCHES) return GEO_SEARCH_BUDGET_NOTICE
-      searches++
-      const [text, found] = await runGeoNewsTool(argString(args, 'query') || ticker, argNumber(args, 'limit', 5))
-      if (found.length) articles = found
-      for (const a of found) if (a.link) knownUrls.add(a.link)
-      return text
+/** `tool`, refusing every call past the first `max` with `notice`. The
+ * count is taken before the first await: a turn's calls are dispatched
+ * concurrently, and each must see the ones before it. */
+function limitCalls(tool: Tool, max: number, notice: string): Tool {
+  let used = 0
+  return {
+    ...tool,
+    async run(args, ctx) {
+      if (used >= max) return { text: notice }
+      used++
+      return tool.run(args, ctx)
     }
-    if (name === 'read_article') {
-      const url = argString(args, 'url')
-      return knownUrls.has(url) ? runReadArticleTool(url) : UNKNOWN_ARTICLE_URL_ERROR
-    }
-    return 'unknown tool'
   }
-  const text = await runSpecialist(
-    llm, GEOPOLITICS_AGENT_SYSTEM, [TOOL_SPECS.get_geopolitical_news, TOOL_SPECS.read_article],
-    `Analyze geopolitical and macro risk for ${ticker}.`, dispatch, hooks
-  )
-  return { text, articles }
+}
+
+type TextField = 'trendText' | 'fundamentalsText' | 'newsText' | 'geopoliticsText'
+
+/**
+ * A specialist is data: a name, a narrow prompt and its own slice of the
+ * tools. runStockAnalysis runs whatever is in SPECIALISTS, so adding one
+ * means adding an entry here (plus its field on AnalysisResult).
+ */
+interface Specialist {
+  name: string
+  /** How the aggregator is told whose write-up it's reading. */
+  label: string
+  /** Where its write-up lands in the AnalysisResult. */
+  textField: TextField
+  system: string
+  prompt(ticker: string): string
+  /** Called per run, so a tool with a budget starts with all of it. */
+  tools(): Tool[]
+  /** Used when the model gives get_price_history no `days`. */
+  historyDays?: number
+}
+
+export type SpecialistName = 'trend' | 'fundamentals' | 'news' | 'geopolitics'
+
+const SPECIALISTS: (Specialist & { name: SpecialistName })[] = [
+  {
+    name: 'trend',
+    label: 'Trend analysis',
+    textField: 'trendText',
+    system: TREND_AGENT_SYSTEM,
+    prompt: (ticker) => `Analyze the price trend for ${ticker}.`,
+    tools: () => [DATA_TOOLS.get_stock_quote, DATA_TOOLS.get_price_history],
+    historyDays: 90
+  },
+  {
+    name: 'fundamentals',
+    label: 'Fundamentals analysis',
+    textField: 'fundamentalsText',
+    system: FUNDAMENTALS_AGENT_SYSTEM,
+    prompt: (ticker) => `Analyze the fundamentals for ${ticker}.`,
+    tools: () => [DATA_TOOLS.get_company_fundamentals]
+  },
+  {
+    name: 'news',
+    label: 'News analysis',
+    textField: 'newsText',
+    system: NEWS_AGENT_SYSTEM,
+    prompt: (ticker) => `Analyze recent news for ${ticker}.`,
+    tools: () => [DATA_TOOLS.get_stock_news, DATA_TOOLS.read_article]
+  },
+  {
+    name: 'geopolitics',
+    label: 'Geopolitical analysis',
+    textField: 'geopoliticsText',
+    system: GEOPOLITICS_AGENT_SYSTEM,
+    prompt: (ticker) => `Analyze geopolitical and macro risk for ${ticker}.`,
+    tools: () => [
+      limitCalls(DATA_TOOLS.get_geopolitical_news, MAX_GEO_SEARCHES, GEO_SEARCH_BUDGET_NOTICE),
+      DATA_TOOLS.read_article
+    ]
+  }
+]
+
+/** A specialist's write-up plus whatever data its tools turned up. */
+type Findings = { text: string } & Partial<ToolArtifacts>
+
+const hasData = (data: unknown): boolean => (Array.isArray(data) ? data.length > 0 : data != null)
+
+/** MAX_TOOL_ROUNDS counts model calls, not tool calls: a model that reads
+ * articles one at a time can spend every round on tools. Rather than
+ * render that as "no answer", the budget running out forces one last call
+ * with tools forbidden, so it writes up what it already gathered. */
+async function runSpecialist(
+  llm: ChatModel,
+  specialist: Specialist,
+  ticker: string,
+  services: Services,
+  hooks: SpecialistHooks
+): Promise<Findings> {
+  const tools = specialist.tools()
+  const ctx: ToolContext = { market: services.market, knownUrls: new Set(), ticker, historyDays: specialist.historyDays }
+  const found: Partial<ToolArtifacts> = {}
+  const text = await runToolLoop({
+    llm,
+    system: specialist.system,
+    messages: [{ role: 'user', text: specialist.prompt(ticker) }],
+    tools: tools.map((tool) => tool.spec),
+    // The latest non-empty result of each data tool is what the UI shows.
+    dispatch: toolDispatch(tools, ctx, (tool, { data }) => {
+      if (tool.produces && hasData(data)) (found as Record<string, unknown>)[tool.produces] = data
+    }),
+    maxRounds: MAX_TOOL_ROUNDS,
+    budgetExhaustedNotice: BUDGET_EXHAUSTED_NOTICE,
+    ...hooks
+  })
+  return { text, ...found }
 }
 
 export const AGGREGATOR_SYSTEM =
@@ -214,8 +195,8 @@ export const AGGREGATOR_SYSTEM =
   'your assessment, not the four source analyses, so carry the key facts and figures that support it.'
 
 /** Read fresh each run, so a consideration remembered mid-session applies immediately. */
-function aggregatorSystemPrompt(): string {
-  const considerations = loadConsiderations()
+function aggregatorSystemPrompt(store: ConsiderationStore): string {
+  const considerations = store.list()
   if (!considerations.length) return AGGREGATOR_SYSTEM
   return `${AGGREGATOR_SYSTEM}\n\nStanding considerations to weigh:\n${considerations.map((c) => `- ${c}`).join('\n')}`
 }
@@ -228,14 +209,15 @@ function orUnavailable<T>(settled: PromiseSettledResult<T>, empty: (text: string
   return empty(`Unavailable -- this analysis failed: ${reason}`)
 }
 
-/** Runs the four specialists concurrently (each hits a different data
+/** Runs the specialists concurrently (each hits a different data
  * source and none needs another's output), then the aggregator. A failed
  * specialist leaves a gap the aggregator works around rather than sinking
- * the other three; throws only if all four fail or the aggregator does. */
+ * the others; throws only if all of them fail or the aggregator does. */
 export async function runStockAnalysis(
   llm: ChatModel,
   ticker: string,
-  { onAgentStart, onToolCall, onReasoningStep, onReasoning, signal }: AnalysisCallbacks = {}
+  { onAgentStart, onToolCall, onReasoningStep, onReasoning, signal }: AnalysisCallbacks = {},
+  services: Services = defaultServices
 ): Promise<AnalysisResult> {
   const hooksFor = (agent: SpecialistName): SpecialistHooks => ({
     onToolCall: onToolCall && ((name, args) => onToolCall(agent, name, args)),
@@ -244,46 +226,32 @@ export async function runStockAnalysis(
     signal
   })
 
-  for (const name of ['trend', 'fundamentals', 'news', 'geopolitics'] as const) onAgentStart?.(name)
-  const settled = await Promise.allSettled([
-    runTrendAgent(llm, ticker, hooksFor('trend')),
-    runFundamentalsAgent(llm, ticker, hooksFor('fundamentals')),
-    runNewsAgent(llm, ticker, hooksFor('news')),
-    runGeopoliticsAgent(llm, ticker, hooksFor('geopolitics'))
-  ])
+  for (const { name } of SPECIALISTS) onAgentStart?.(name)
+  const settled = await Promise.allSettled(
+    SPECIALISTS.map((specialist) => runSpecialist(llm, specialist, ticker, services, hooksFor(specialist.name)))
+  )
   signal?.throwIfAborted()
   const failures = settled.flatMap((s) => (s.status === 'rejected' ? [s.reason] : []))
   if (failures.length === settled.length) throw failures[0]
-  const trend = orUnavailable(settled[0], (text) => ({ text, quotes: [], bars: [] }))
-  const fundamentals = orUnavailable(settled[1], (text) => ({ text, fundamentals: null }))
-  const news = orUnavailable(settled[2], (text) => ({ text, articles: [] }))
-  const geopolitics = orUnavailable(settled[3], (text) => ({ text, articles: [] }))
+  const findings = settled.map((s): Findings => orUnavailable(s, (text) => ({ text })))
 
   onAgentStart?.('aggregator')
   const prompt =
-    `Ticker: ${ticker}\n\nTrend analysis:\n${trend.text}\n\nFundamentals analysis:\n${fundamentals.text}\n\n` +
-    `News analysis:\n${news.text}\n\nGeopolitical analysis:\n${geopolitics.text}`
+    `Ticker: ${ticker}\n\n` +
+    SPECIALISTS.map((specialist, i) => `${specialist.label}:\n${findings[i].text}`).join('\n\n')
   onReasoningStep?.('aggregator')
   const verdict = await llm.complete({
-    system: aggregatorSystemPrompt(),
+    system: aggregatorSystemPrompt(services.considerations),
     messages: [{ role: 'user', text: prompt }],
     onReasoning: onReasoning && ((delta) => onReasoning('aggregator', delta)),
     signal
   })
 
-  return {
-    ticker,
-    trendText: trend.text,
-    fundamentalsText: fundamentals.text,
-    newsText: news.text,
-    geopoliticsText: geopolitics.text,
-    verdictText: verdict.text,
-    quotes: trend.quotes,
-    bars: trend.bars,
-    articles: news.articles,
-    geoArticles: geopolitics.articles,
-    fundamentals: fundamentals.fundamentals
-  }
+  const texts = {} as Record<TextField, string>
+  SPECIALISTS.forEach((specialist, i) => (texts[specialist.textField] = findings[i].text))
+  const data: ToolArtifacts = { quotes: [], bars: [], articles: [], geoArticles: [], fundamentals: null }
+  for (const { text: _text, ...artifacts } of findings) Object.assign(data, artifacts)
+  return { ticker, ...texts, verdictText: verdict.text, ...data }
 }
 
 /**
