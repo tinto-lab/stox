@@ -9,34 +9,137 @@ below) and a native macOS app (see [macOS app](#macos-app)). The
 app is a stock price and fundamentals dashboard, with the REPL's research
 chat available as a side panel.
 
-## Layout
+## Architecture
+
+Two frontends share one core. Nothing in `src/core/` knows about Electron,
+React or the terminal: it takes plain inputs and returns data (or calls
+callbacks), and each frontend renders that its own way.
+
+```
+  terminal                         macOS app
+  ┌──────────────┐                 ┌─────────────────────────────┐
+  │ cli/shell.ts │                 │ renderer (React UI)         │
+  │  REPL, render│                 │   window.stox  ◄─ preload   │
+  └──────┬───────┘                 └──────────────┬──────────────┘
+         │                                  IPC   │  (commands ▼ / events ▲)
+         │                         ┌──────────────┴──────────────┐
+         │                         │ main process: ipc modules,  │
+         │                         │   ChatSession (session.ts)  │
+         │                         └──────────────┬──────────────┘
+         └────────────────┬───────────────────────┘
+                          ▼
+   ┌─────────────────────  src/core  ──────────────────────────┐
+   │ agent.ts ─┐                                                │
+   │           ├─► toolLoop ─► ChatModel (llm: providers/openai)│
+   │ analysis ─┘      │                                         │
+   │ (4 specialists   ▼                                         │
+   │  + aggregator)  tools.ts ─► Services ports (services.ts)   │
+   │                              ├ MarketData ─► eodhd, yahoo, │
+   │                              │               gnews, webfetch│
+   │                              └ ConsiderationStore ─► disk  │
+   └─────────────────────────────────────────────────────────────┘
+```
+
+### Layout
 
 ```
 src/core/               everything both frontends share -- no Electron, no UI
   config.ts             ~/.config/stox/ and .env loading
-  marketData.ts         EODHD quotes/history/news/search, Yahoo Finance fundamentals
+  marketData.ts         entry point for market data (re-exports the three below)
+    eodhd.ts            EODHD quotes, history, news, symbol search
+    yahoo.ts            Yahoo Finance fundamentals (cookie + crumb session)
+    marketError.ts      MarketDataError and number coercion
   gnews.ts              Google News RSS world/geopolitical news (free, keyless)
   webfetch.ts           fetches a url and extracts its readable article text
-  llm.ts                LLM provider registry, the OpenAI-compatible adapter, the shared tool loop
-  tools.ts              the data-lookup tools the agents call (quote/news/history/...)
+  llm.ts                entry point for the LLM layer (re-exports the four below)
+    llmTypes.ts         provider-neutral messages and the ChatModel interface
+    providers.ts        provider registry (DeepSeek, OpenAI), buildLLM, thinking switch
+    openai.ts           the OpenAI-compatible streaming adapter
+    toolLoop.ts         the call-model / run-tools loop the agents share
+  services.ts           the ports (MarketData, ConsiderationStore) and defaultServices
+  tools.ts              the data-lookup tools: spec + implementation, and toolDispatch
   agent.ts              the chat agent: natural-language questions via tool use
-  analysis.ts           the /analyze multi-agent trend/fundamentals/news/geopolitics pipeline
+  analysis.ts           the /analyze pipeline: specialists as data, then an aggregator
   considerations.ts     standing factors the agent always weighs, persisted to disk
   conversations.ts      saved chat conversations (resume later), titled by a short LLM summary
   session.ts            one chat conversation driven by commands -- the app's chat backend
   whisper.ts            runs whisper.cpp's whisper-server and downloads its model
   voiceSession.ts       streaming dictation: live preview while speaking, commit after a pause
-src/cli/                the terminal REPL (shell.ts) and its rendering (render.ts)
-src/main/               Electron main process: windows, IPC
-src/preload/            the window.stox API exposed to the renderer
+src/cli/                the terminal REPL (shell.ts), its rendering (render.ts) and live output (reasoning.ts)
+src/main/               Electron main process
+  index.ts              window, single-instance lock, the chat bridge, wiring
+  ipc.ts                the handle() wrapper: failures come back as {ok: false, error}
+  marketIpc.ts          market data and the watchlist
+  settingsIpc.ts        settings (.env) and light/dark theme
+  voiceIpc.ts           the whisper server and dictation sessions
+src/preload/            builds window.stox from one small object per area
 src/renderer/           the React UI
-src/shared/             types and the chat protocol, shared by all of the above
+  useBridge.ts          the chat hook: IPC, request tracking
+  transcript.ts         the chat transcript's row types and pure reducers
+  voice/                dictation hooks and the audio recorder
+src/shared/             types, the chat protocol and pure helpers, shared by all of the above
 test/                   vitest suite (see Testing)
 scripts/kill_app.sh     stops any running Stox.app (used by `npm run package:mac`)
 scripts/fetch-whisper.sh  builds the whisper-server binary into build/bin/ (see Voice dictation)
 ```
 
-Each core module has one job; the module comments say which.
+### How a question flows
+
+1. The frontend hands a question to `askAgent` (`agent.ts`), directly from
+   the CLI or, in the app, via a `ChatSession` command.
+2. `runToolLoop` calls the model. The model streams its reply; tool calls
+   are run through `toolDispatch`, the results are appended, and the model
+   is called again until it answers or the round budget (10) runs out, in
+   which case it is made to answer with what it has.
+3. For buy/sell and risk questions the model calls `analyze_stock`, which
+   runs the four specialists (trend, fundamentals, news, geopolitics)
+   concurrently, each its own conversation with a narrow prompt and slice
+   of the tools. A failed specialist leaves a gap the aggregator works
+   around. The aggregator, which has no tools, writes the risk assessment.
+4. Progress goes out through callbacks as it happens: tool calls, the
+   model's reasoning (DeepSeek thinking mode) and the answer text. The CLI
+   prints them; in the app `ChatSession` turns them into `BridgeEvent`s.
+   The final `AgentResult` is delivered last.
+
+### The app's process boundary (IPC)
+
+The renderer can't touch files, the network or Node, so it asks the main
+process to. The preload script builds `window.stox` from six small
+interfaces (`MarketApi`, `WatchlistApi`, `ChatApi`, `SettingsApi`,
+`AppearanceApi`, `VoiceApi`, all in `shared/types.ts`); each call becomes an
+`ipcRenderer.invoke` on a named channel (`market:quotes`, `settings:save`,
+...) that a handler in `src/main/*Ipc.ts` answers. Going the other way, the
+main process pushes events (`bridge:event`, `voice:event`). The chat
+protocol, a `BridgeCommand` in and `BridgeEvent`s out, is in
+`shared/bridgeProtocol.ts`. Commands that change the conversation (ask,
+analyze, reset, resume) are queued and run one at a time; the rest answer
+immediately.
+
+### Design principles
+
+- **Providers are a registry.** A model is a `ChatModel` (`llmTypes.ts`);
+  `LLM_PROVIDERS` maps a provider name to one. Adding a provider is one
+  entry, plus an adapter only if it doesn't speak the OpenAI chat API.
+  The agents only ever see `ChatModel`.
+- **Tools are data.** A `Tool` is a spec plus its implementation. An agent
+  is handed a list of tools and `toolDispatch` routes calls to them.
+  Failures come back to the model as `error: ...` text, not exceptions.
+  `read_article` is one shared tool; its allow-list (only urls a news tool
+  returned) lives in one place.
+- **Specialists are data.** Each is a name, a prompt and a list of tools
+  (`SPECIALISTS` in `analysis.ts`); `runStockAnalysis` runs whatever is in
+  the list, so adding one doesn't touch the pipeline.
+- **The core depends on ports, not services.** `services.ts` defines
+  `MarketData` and `ConsiderationStore`; `defaultServices` is the single
+  place EODHD, Yahoo, Google News and the filesystem are wired in. Agents,
+  tools and the analysis take a `Services`; `ChatSession` and the CLI shell
+  also take the model builder. Tests pass fakes.
+- **Everything streams.** The model is always called with `stream: true`.
+  Reasoning and answer text reach the UI through `onReasoning` / `onText`
+  as they arrive.
+- **Small interfaces.** `window.stox` is the union of six per-area
+  interfaces, and hooks ask for only the one they use. Each core module has
+  one job; the module comments say which.
 
 ## Requirements
 
