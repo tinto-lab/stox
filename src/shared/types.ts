@@ -247,24 +247,38 @@ export interface VoiceStatus {
   language: VoiceLanguage
 }
 
-/** The `window.stox` API the preload script exposes to the renderer. */
-export interface StoxApi {
-  // Market data -- fetched directly from EODHD/Yahoo by the main process.
+/** Market data -- fetched directly from EODHD/Yahoo by the main process. */
+export interface MarketApi {
   quotes(tickers: string[]): Promise<QuoteResult>
   history(ticker: string, range: HistoryRange): Promise<Bar[]>
   fundamentals(ticker: string): Promise<Fundamentals>
   search(query: string): Promise<SymbolMatch[]>
   status(): Promise<MarketStatus>
+}
+
+export interface WatchlistApi {
   readWatchlist(): Promise<WatchlistEntry[]>
   writeWatchlist(entries: WatchlistEntry[]): Promise<void>
-  // Chat panel -- a ChatSession (src/core/session.ts) in the main process.
+}
+
+/** Chat panel -- a ChatSession (src/core/session.ts) in the main process. */
+export interface ChatApi {
   send(command: BridgeCommand): void
   onEvent(listener: (event: BridgeEvent) => void): () => void
+}
+
+export interface SettingsApi {
   readSettings(): Promise<Record<string, string>>
   saveSettings(values: Record<string, string>): Promise<void>
+}
+
+export interface AppearanceApi {
   getTheme(): Promise<Theme>
   setTheme(theme: Theme): Promise<void>
-  // Voice dictation -- whisper.cpp running locally in the main process.
+}
+
+/** Voice dictation -- whisper.cpp running locally in the main process. */
+export interface VoiceApi {
   voiceStatus(): Promise<VoiceStatus>
   /** Downloads the model if needed (progress arrives as events) and starts the
    * server. Dictation can't start before this has resolved. */
@@ -281,3 +295,7 @@ export interface StoxApi {
   voiceCancel(): void
   onVoiceEvent(listener: (event: VoiceEvent) => void): () => void
 }
+
+/** The `window.stox` API the preload script exposes to the renderer: all of
+ * the above. Code that needs only one area should ask for just that interface. */
+export interface StoxApi extends MarketApi, WatchlistApi, ChatApi, SettingsApi, AppearanceApi, VoiceApi {}

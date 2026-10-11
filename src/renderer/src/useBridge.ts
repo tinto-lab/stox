@@ -13,6 +13,7 @@ import {
 import type {
   AgentResult,
   AnalysisResult,
+  ChatApi,
   ChatStatus,
   ConversationSummary,
   QuoteResult,
@@ -27,7 +28,7 @@ type PendingKind = 'ask' | 'quote' | 'analyze' | 'reset' | 'resume'
 /** Chat state for the side panel, driven by the main process's ChatSession.
  * `enabled` stays false until the panel is first opened, so a session that
  * only uses the dashboard never asks for the chat's status. */
-export function useBridge(enabled: boolean) {
+export function useBridge(enabled: boolean, api: ChatApi = window.stox) {
   const [transcript, setTranscript] = useState<TranscriptItem[]>([])
   const [isBusy, setIsBusy] = useState(false)
   const [considerations, setConsiderations] = useState<string[]>([])
@@ -41,15 +42,15 @@ export function useBridge(enabled: boolean) {
   }, [])
 
   const refreshConsiderations = useCallback(() => {
-    window.stox.send({ id: makeId(), cmd: 'considerations_list' })
+    api.send({ id: makeId(), cmd: 'considerations_list' })
   }, [])
 
   const refreshStatus = useCallback(() => {
-    window.stox.send({ id: makeId(), cmd: 'status' })
+    api.send({ id: makeId(), cmd: 'status' })
   }, [])
 
   useEffect(() => {
-    const unsubscribe = window.stox.onEvent((event: BridgeEvent) => {
+    const unsubscribe = api.onEvent((event: BridgeEvent) => {
       if (event.type === 'backend_exit') {
         // Whatever was in flight died with the process and will never be answered.
         pending.current.clear()
@@ -151,7 +152,7 @@ export function useBridge(enabled: boolean) {
       pending.current.set(id, 'ask')
       setIsBusy(true)
       append({ kind: 'user_message', id, text })
-      window.stox.send({ id, cmd: 'ask', text, contexts })
+      api.send({ id, cmd: 'ask', text, contexts })
     },
     [append]
   )
@@ -162,7 +163,7 @@ export function useBridge(enabled: boolean) {
       pending.current.set(id, 'quote')
       setIsBusy(true)
       append({ kind: 'user_message', id, text: `/price ${tickers.join(' ')}` })
-      window.stox.send({ id, cmd: 'quote', tickers })
+      api.send({ id, cmd: 'quote', tickers })
     },
     [append]
   )
@@ -173,7 +174,7 @@ export function useBridge(enabled: boolean) {
       pending.current.set(id, 'analyze')
       setIsBusy(true)
       append({ kind: 'user_message', id, text: `/analyze ${ticker}` })
-      window.stox.send({ id, cmd: 'analyze', ticker })
+      api.send({ id, cmd: 'analyze', ticker })
     },
     [append]
   )
@@ -181,32 +182,32 @@ export function useBridge(enabled: boolean) {
   const reset = useCallback(() => {
     const id = makeId()
     pending.current.set(id, 'reset')
-    window.stox.send({ id, cmd: 'reset' })
+    api.send({ id, cmd: 'reset' })
   }, [])
 
   const listConversations = useCallback(() => {
     setConversations(null)
-    window.stox.send({ id: makeId(), cmd: 'conversations_list' })
+    api.send({ id: makeId(), cmd: 'conversations_list' })
   }, [])
 
   const resume = useCallback((conversationId: string) => {
     const id = makeId()
     pending.current.set(id, 'resume')
     setIsBusy(true)
-    window.stox.send({ id, cmd: 'resume', conversationId })
+    api.send({ id, cmd: 'resume', conversationId })
   }, [])
 
   const addConsideration = useCallback((text: string) => {
-    window.stox.send({ id: makeId(), cmd: 'considerations_add', text })
+    api.send({ id: makeId(), cmd: 'considerations_add', text })
   }, [])
 
   const removeConsideration = useCallback((text: string) => {
-    window.stox.send({ id: makeId(), cmd: 'considerations_remove', text })
+    api.send({ id: makeId(), cmd: 'considerations_remove', text })
   }, [])
 
   // Answered with the updated status, which the default branch above picks up.
   const setThinking = useCallback((enabled: boolean) => {
-    window.stox.send({ id: makeId(), cmd: 'set_thinking', enabled })
+    api.send({ id: makeId(), cmd: 'set_thinking', enabled })
   }, [])
 
   return {

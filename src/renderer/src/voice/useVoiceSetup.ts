@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { VoiceLanguage, VoiceStatus } from '../../../shared/types'
+import type { VoiceApi, VoiceLanguage, VoiceStatus } from '../../../shared/types'
 
 export type SetupPhase = 'idle' | 'downloading' | 'starting'
 
@@ -12,7 +12,7 @@ export type SetupPhase = 'idle' | 'downloading' | 'starting'
  * `autoStart` brings the server up in the background when the model is
  * already downloaded, so the mic is ready by the time it's needed.
  */
-export function useVoiceSetup(autoStart: boolean) {
+export function useVoiceSetup(autoStart: boolean, api: VoiceApi = window.stox) {
   const [status, setStatus] = useState<VoiceStatus | null>(null)
   const [phase, setPhase] = useState<SetupPhase>('idle')
   const [progress, setProgress] = useState(0)
@@ -21,7 +21,7 @@ export function useVoiceSetup(autoStart: boolean) {
 
   const refresh = useCallback(async () => {
     try {
-      setStatus(await window.stox.voiceStatus())
+      setStatus(await api.voiceStatus())
     } catch {
       setStatus(null)
     }
@@ -29,7 +29,7 @@ export function useVoiceSetup(autoStart: boolean) {
 
   useEffect(() => {
     void refresh()
-    return window.stox.onVoiceEvent((event) => {
+    return api.onVoiceEvent((event) => {
       if (event.type === 'server') setStatus((s) => (s ? { ...s, server: event.state } : s))
       else if (event.type === 'model-progress') {
         setProgress(event.fraction)
@@ -46,7 +46,7 @@ export function useVoiceSetup(autoStart: boolean) {
     setProgress(0)
     setPhase(modelAlreadyThere ? 'starting' : 'downloading')
     try {
-      await window.stox.voicePrepare()
+      await api.voicePrepare()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -58,7 +58,7 @@ export function useVoiceSetup(autoStart: boolean) {
 
   const stopServer = useCallback(async () => {
     try {
-      await window.stox.voiceStopServer()
+      await api.voiceStopServer()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -67,7 +67,7 @@ export function useVoiceSetup(autoStart: boolean) {
   const setLanguage = useCallback(
     async (language: VoiceLanguage) => {
       try {
-        await window.stox.setVoiceLanguage(language)
+        await api.setVoiceLanguage(language)
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
       }

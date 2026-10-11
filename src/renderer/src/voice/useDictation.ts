@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { VoiceApi } from '../../../shared/types'
 import { startRecorder, type Recorder } from './recorder'
 
 export type DictationState = 'idle' | 'starting' | 'listening' | 'finishing'
@@ -18,7 +19,11 @@ export function joinSpoken(base: string, spoken: string): string {
  * when the session is over, with `cancelled` true if the text should be
  * thrown away.
  */
-export function useDictation(onText: (text: string) => void, onEnd: (cancelled: boolean) => void) {
+export function useDictation(
+  onText: (text: string) => void,
+  onEnd: (cancelled: boolean) => void,
+  api: VoiceApi = window.stox
+) {
   const [state, setState] = useState<DictationState>('idle')
   const [error, setError] = useState<string | null>(null)
   const recorder = useRef<Recorder | null>(null)
@@ -44,7 +49,7 @@ export function useDictation(onText: (text: string) => void, onEnd: (cancelled: 
 
   useEffect(
     () =>
-      window.stox.onVoiceEvent((event) => {
+      api.onVoiceEvent((event) => {
         if (stateRef.current === 'idle') return
         switch (event.type) {
           case 'partial':
@@ -70,7 +75,7 @@ export function useDictation(onText: (text: string) => void, onEnd: (cancelled: 
     () => () => {
       if (stateRef.current !== 'idle') {
         recorder.current?.stop()
-        window.stox.voiceCancel()
+        api.voiceCancel()
       }
     },
     []
@@ -90,16 +95,16 @@ export function useDictation(onText: (text: string) => void, onEnd: (cancelled: 
     const stale = (): boolean => startSeq.current !== mine || current() !== 'starting'
     let started: Recorder | null = null
     try {
-      await window.stox.voiceStart()
+      await api.voiceStart()
       if (stale()) throw new Cancelled()
-      started = await startRecorder((samples) => window.stox.voicePush(samples))
+      started = await startRecorder((samples) => api.voicePush(samples))
       if (stale()) throw new Cancelled()
       recorder.current = started
       set('listening')
     } catch (e) {
       started?.stop()
       // Only the latest start owns the main-process session.
-      if (startSeq.current === mine) window.stox.voiceCancel()
+      if (startSeq.current === mine) api.voiceCancel()
       if (e instanceof Cancelled || startSeq.current !== mine) return
       setError(e instanceof Error ? e.message : String(e))
       finish(true)
@@ -114,7 +119,7 @@ export function useDictation(onText: (text: string) => void, onEnd: (cancelled: 
     recorder.current = null
     set('finishing')
     try {
-      await window.stox.voiceStop() // resolves after the last commit; 'done' then ends the session
+      await api.voiceStop() // resolves after the last commit; 'done' then ends the session
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       finish(false)
@@ -123,7 +128,7 @@ export function useDictation(onText: (text: string) => void, onEnd: (cancelled: 
 
   const cancel = useCallback(() => {
     if (stateRef.current === 'idle') return
-    window.stox.voiceCancel()
+    api.voiceCancel()
     finish(true)
   }, [finish])
 

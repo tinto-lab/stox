@@ -1,17 +1,23 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
+  AppearanceApi,
   Bar,
+  ChatApi,
   Fundamentals,
   HistoryRange,
   IpcResult,
+  MarketApi,
   MarketStatus,
   QuoteResult,
+  SettingsApi,
   StoxApi,
   SymbolMatch,
   Theme,
+  VoiceApi,
   VoiceEvent,
   VoiceLanguage,
   VoiceStatus,
+  WatchlistApi,
   WatchlistEntry
 } from '../shared/types'
 import type { BridgeCommand, BridgeEvent } from '../shared/bridgeProtocol'
@@ -23,26 +29,44 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
   return result.data
 }
 
-const stoxApi: StoxApi = {
+/** Subscribes `listener` to events the main process sends on `channel`; returns the unsubscribe. */
+function subscribe<T>(channel: string, listener: (event: T) => void): () => void {
+  const handler = (_event: Electron.IpcRendererEvent, payload: T): void => listener(payload)
+  ipcRenderer.on(channel, handler)
+  return () => ipcRenderer.removeListener(channel, handler)
+}
+
+const market: MarketApi = {
   quotes: (tickers: string[]) => invoke<QuoteResult>('market:quotes', tickers),
   history: (ticker: string, range: HistoryRange) => invoke<Bar[]>('market:history', ticker, range),
   fundamentals: (ticker: string) => invoke<Fundamentals>('market:fundamentals', ticker),
   search: (query: string) => invoke<SymbolMatch[]>('market:search', query),
-  status: () => invoke<MarketStatus>('market:status'),
+  status: () => invoke<MarketStatus>('market:status')
+}
+
+const watchlist: WatchlistApi = {
   readWatchlist: () => invoke<WatchlistEntry[]>('watchlist:read'),
-  writeWatchlist: (entries: WatchlistEntry[]) => invoke<void>('watchlist:write', entries),
+  writeWatchlist: (entries: WatchlistEntry[]) => invoke<void>('watchlist:write', entries)
+}
+
+const chat: ChatApi = {
   send(command: BridgeCommand): void {
     void ipcRenderer.invoke('bridge:send', command)
   },
-  onEvent(listener: (event: BridgeEvent) => void): () => void {
-    const handler = (_event: Electron.IpcRendererEvent, payload: BridgeEvent): void => listener(payload)
-    ipcRenderer.on('bridge:event', handler)
-    return () => ipcRenderer.removeListener('bridge:event', handler)
-  },
+  onEvent: (listener: (event: BridgeEvent) => void) => subscribe('bridge:event', listener)
+}
+
+const settings: SettingsApi = {
   readSettings: () => invoke<Record<string, string>>('settings:read'),
-  saveSettings: (values: Record<string, string>) => invoke<void>('settings:save', values),
+  saveSettings: (values: Record<string, string>) => invoke<void>('settings:save', values)
+}
+
+const appearance: AppearanceApi = {
   getTheme: () => invoke<Theme>('appearance:get'),
-  setTheme: (theme: Theme) => invoke<void>('appearance:set', theme),
+  setTheme: (theme: Theme) => invoke<void>('appearance:set', theme)
+}
+
+const voice: VoiceApi = {
   voiceStatus: () => invoke<VoiceStatus>('voice:status'),
   voicePrepare: () => invoke<void>('voice:prepare'),
   voiceStart: () => invoke<void>('voice:start'),
@@ -55,11 +79,9 @@ const stoxApi: StoxApi = {
   voiceCancel(): void {
     void ipcRenderer.invoke('voice:cancel')
   },
-  onVoiceEvent(listener: (event: VoiceEvent) => void): () => void {
-    const handler = (_event: Electron.IpcRendererEvent, payload: VoiceEvent): void => listener(payload)
-    ipcRenderer.on('voice:event', handler)
-    return () => ipcRenderer.removeListener('voice:event', handler)
-  },
+  onVoiceEvent: (listener: (event: VoiceEvent) => void) => subscribe('voice:event', listener)
 }
+
+const stoxApi: StoxApi = { ...market, ...watchlist, ...chat, ...settings, ...appearance, ...voice }
 
 contextBridge.exposeInMainWorld('stox', stoxApi)
