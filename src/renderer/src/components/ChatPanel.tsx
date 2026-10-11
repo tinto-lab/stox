@@ -138,7 +138,8 @@ export function ChatPanel({
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
 
   // Follows new rows, and reasoning as it grows.
-  const lastText = transcript.at(-1)?.kind === 'reasoning' ? (transcript.at(-1) as { text: string }).text.length : 0
+  const last = transcript.at(-1)
+  const lastText = last?.kind === 'reasoning' || last?.kind === 'streaming_text' ? last.text.length : 0
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
   }, [transcript.length, lastText])
@@ -213,7 +214,9 @@ export function ChatPanel({
   }
 
   const needsSetup = status !== null && !status.providerKeyPresent
-  const reasoningLive = transcript.some((item) => item.kind === 'reasoning' && item.endedAt === null && item.text !== '')
+  const reasoningLive = transcript.some(
+    (item) => (item.kind === 'reasoning' && item.endedAt === null && item.text !== '') || item.kind === 'streaming_text'
+  )
 
   return (
     <aside className="chat-panel">

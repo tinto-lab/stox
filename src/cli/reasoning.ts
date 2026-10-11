@@ -21,6 +21,8 @@ function seconds(ms: number): string {
 export class ReasoningPrinter {
   private column = 0
   private streaming = false
+  private answered = false
+  private textOpen = false
   // Timed from the model call's start to its last delta: how long it spent
   // reasoning, not how long until something else got printed.
   private readonly buffers = new Map<string, { text: string; startedAt: number; lastAt: number }>()
@@ -54,6 +56,19 @@ export class ReasoningPrinter {
       this.write(dim(piece))
       this.column += piece.length
     }
+  }
+
+  /** A piece of the chat agent's answer, printed as it arrives. */
+  text(text: string): void {
+    if (this.streaming) this.endStream()
+    this.answered = true
+    this.textOpen = true
+    this.write(text)
+  }
+
+  /** Whether any answer text was streamed (so it needn't be printed again). */
+  get streamedAnswer(): boolean {
+    return this.answered
   }
 
   /** A new model call for a specialist: prints its previous call's block. */
@@ -98,6 +113,10 @@ export class ReasoningPrinter {
   }
 
   private endStream(): void {
+    if (this.textOpen) {
+      this.write('\n')
+      this.textOpen = false
+    }
     if (!this.streaming) return
     this.write('\n')
     this.streaming = false

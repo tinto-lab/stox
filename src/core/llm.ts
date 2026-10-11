@@ -49,6 +49,9 @@ export interface CompletionRequest {
   /** Receives the model's reasoning as it streams in, where the model
    * exposes it (DeepSeek in thinking mode); otherwise never called. */
   onReasoning?: (delta: string) => void
+  /** Receives the reply text as it streams in. A reply that goes on to call
+   * tools may have streamed some text first; it's still part of the reply. */
+  onText?: (delta: string) => void
   signal?: AbortSignal
 }
 
@@ -163,6 +166,7 @@ export class OpenAIChatModel implements ChatModel {
     tools,
     forbidToolUse,
     onReasoning,
+    onText,
     signal
   }: CompletionRequest): Promise<AssistantMessage> {
     const params = {
@@ -180,42 +184,33 @@ export class OpenAIChatModel implements ChatModel {
         : {})
     }
 
-    // Streamed only when someone is watching the reasoning: the reply is the
-    // same either way, it just arrives in pieces.
-    if (onReasoning && this.thinking) {
-      const stream = await this.client.chat.completions.create({ ...params, stream: true }, { signal })
-      let text = ''
-      let reasoning = ''
-      const calls: { id: string; name: string; arguments: string }[] = []
-      for await (const chunk of stream) {
-        const delta = chunk.choices[0]?.delta as
-          | (OpenAI.Chat.ChatCompletionChunk.Choice.Delta & { reasoning_content?: string | null })
-          | undefined
-        if (!delta) continue
-        if (delta.reasoning_content) {
-          reasoning += delta.reasoning_content
-          onReasoning(delta.reasoning_content)
-        }
-        if (delta.content) text += delta.content
-        // A call's id and name come in its first fragment, the arguments
-        // spread over the rest; `index` says which call a fragment belongs to.
-        for (const fragment of delta.tool_calls ?? []) {
-          const call = (calls[fragment.index] ??= { id: '', name: '', arguments: '' })
-          if (fragment.id) call.id = fragment.id
-          if (fragment.function?.name) call.name += fragment.function.name
-          if (fragment.function?.arguments) call.arguments += fragment.function.arguments
-        }
+    const stream = await this.client.chat.completions.create({ ...params, stream: true }, { signal })
+    let text = ''
+    let reasoning = ''
+    const calls: { id: string; name: string; arguments: string }[] = []
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta as
+        | (OpenAI.Chat.ChatCompletionChunk.Choice.Delta & { reasoning_content?: string | null })
+        | undefined
+      if (!delta) continue
+      if (delta.reasoning_content) {
+        reasoning += delta.reasoning_content
+        onReasoning?.(delta.reasoning_content)
       }
-      return this.reply(text, reasoning, calls.filter(Boolean))
+      if (delta.content) {
+        text += delta.content
+        onText?.(delta.content)
+      }
+      // A call's id and name come in its first fragment, the arguments
+      // spread over the rest; `index` says which call a fragment belongs to.
+      for (const fragment of delta.tool_calls ?? []) {
+        const call = (calls[fragment.index] ??= { id: '', name: '', arguments: '' })
+        if (fragment.id) call.id = fragment.id
+        if (fragment.function?.name) call.name += fragment.function.name
+        if (fragment.function?.arguments) call.arguments += fragment.function.arguments
+      }
     }
-
-    const response = await this.client.chat.completions.create(params, { signal })
-    const message = response.choices[0]?.message
-    const calls = (message?.tool_calls ?? []).flatMap((c) =>
-      c.type === 'function' ? [{ id: c.id, name: c.function.name, arguments: c.function.arguments }] : []
-    )
-    const reasoning = (message as { reasoning_content?: unknown } | undefined)?.reasoning_content
-    return this.reply(message?.content ?? '', typeof reasoning === 'string' ? reasoning : '', calls)
+    return this.reply(text, reasoning, calls.filter(Boolean))
   }
 
   private reply(text: string, reasoning: string, calls: { id: string; name: string; arguments: string }[]): AssistantMessage {
@@ -286,6 +281,8 @@ export interface ToolLoopOptions {
   onStep?: () => void
   /** The model's reasoning as it streams in (see CompletionRequest). */
   onReasoning?: (delta: string) => void
+  /** The reply text as it streams in (see CompletionRequest). */
+  onText?: (delta: string) => void
   /** Unset: loop until the model stops calling tools. Set: after that many
    * model calls, append `budgetExhaustedNotice` and make one last call with
    * tool use forbidden, so the model writes up what it has instead of nothing. */
@@ -300,12 +297,12 @@ export interface ToolLoopOptions {
  * again. Returns the model's final text.
  */
 export async function runToolLoop(options: ToolLoopOptions): Promise<string> {
-  const { llm, system, messages, tools, dispatch, onToolCall, onStep, onReasoning, maxRounds, signal } = options
+  const { llm, system, messages, tools, dispatch, onToolCall, onStep, onReasoning, onText, maxRounds, signal } = options
 
   for (let round = 0; maxRounds === undefined || round < maxRounds; round++) {
     signal?.throwIfAborted()
     onStep?.()
-    const reply = await llm.complete({ system, messages, tools, onReasoning, signal })
+    const reply = await llm.complete({ system, messages, tools, onReasoning, onText, signal })
     messages.push(reply)
     if (!reply.toolCalls.length) return reply.text
 
@@ -321,7 +318,7 @@ export async function runToolLoop(options: ToolLoopOptions): Promise<string> {
   messages.push({ role: 'user', text: options.budgetExhaustedNotice ?? 'Answer now with what you have.' })
   signal?.throwIfAborted()
   onStep?.()
-  const final = await llm.complete({ system, messages, tools, forbidToolUse: true, onReasoning, signal })
+  const final = await llm.complete({ system, messages, tools, forbidToolUse: true, onReasoning, onText, signal })
   messages.push(final)
   return final.text
 }

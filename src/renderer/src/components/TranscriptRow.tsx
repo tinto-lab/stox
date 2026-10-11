@@ -23,6 +23,13 @@ export function TranscriptRow({ item }: { item: TranscriptItem }) {
         </div>
       )
 
+    case 'streaming_text':
+      return (
+        <div className="row assistant">
+          <p className="assistant-text">{item.text}</p>
+        </div>
+      )
+
     case 'quote_result':
       return (
         <div className="row assistant">

@@ -32,6 +32,22 @@ const conversation: ChatMessage[] = [
   { role: 'assistant', text: 'AAPL is at 1.', toolCalls: [] }
 ]
 
+/** What `create` returns for a streamed request: the message as one chunk. */
+async function* streamOf(message: Record<string, unknown>) {
+  const { tool_calls, ...rest } = message as { tool_calls?: { id: string; function: { name: string; arguments: string } }[] }
+  yield {
+    choices: [
+      {
+        delta: {
+          ...rest,
+          ...(tool_calls ? { tool_calls: tool_calls.map((c, index) => ({ index, id: c.id, function: c.function })) } : {})
+        }
+      }
+    ]
+  }
+}
+const replyWith = (message: Record<string, unknown>) => vi.fn(async (_params: Record<string, any>) => streamOf(message))
+
 describe('provider registry', () => {
   it('defaults to deepseek and its default model, honoring overrides', () => {
     expect(currentProviderName()).toBe('deepseek')
@@ -84,17 +100,11 @@ describe('OpenAI-compatible adapter', () => {
   })
 
   it('parses tool calls, tolerating malformed arguments', async () => {
-    const create = vi.fn().mockResolvedValue({
-      choices: [
-        {
-          message: {
-            content: null,
-            tool_calls: [
-              { id: 'c1', type: 'function', function: { name: 'get_stock_quote', arguments: '{"tickers":["TSLA"]}' } },
-              { id: 'c2', type: 'function', function: { name: 'get_stock_news', arguments: '{oops' } }
-            ]
-          }
-        }
+    const create = replyWith({
+      content: null,
+      tool_calls: [
+        { id: 'c1', type: 'function', function: { name: 'get_stock_quote', arguments: '{"tickers":["TSLA"]}' } },
+        { id: 'c2', type: 'function', function: { name: 'get_stock_news', arguments: '{oops' } }
       ]
     })
     const client = { chat: { completions: { create } } } as unknown as OpenAI
@@ -124,7 +134,7 @@ describe('OpenAI-compatible adapter', () => {
 
 describe('DeepSeek thinking mode', () => {
   function fakeOpenAI(message: Record<string, unknown>) {
-    const create = vi.fn().mockResolvedValue({ choices: [{ message }] })
+    const create = replyWith(message)
     return { client: { chat: { completions: { create } } } as unknown as OpenAI, create }
   }
 
@@ -152,7 +162,7 @@ describe('DeepSeek thinking mode', () => {
     process.env.DEEPSEEK_API_KEY = 'k'
     process.env.STOX_LLM_THINKING = 'on'
     const llm = buildLLM() as OpenAIChatModel
-    const create = vi.fn().mockResolvedValue({ choices: [{ message: { content: 'hi' } }] })
+    const create = replyWith({ content: 'hi' })
     ;(llm as unknown as { client: unknown }).client = { chat: { completions: { create } } }
     await llm.complete({ system: 's', messages: [{ role: 'user', text: 'q' }] })
     expect(create.mock.calls[0][0].thinking).toEqual({ type: 'enabled' })
@@ -194,7 +204,7 @@ describe('DeepSeek thinking mode', () => {
   })
 })
 
-describe('DeepSeek reasoning streaming', () => {
+describe('streaming', () => {
   const chunk = (delta: Record<string, unknown>) => ({ choices: [{ delta }] })
   async function* chunks() {
     yield chunk({ reasoning_content: 'Need the ' })
@@ -208,22 +218,23 @@ describe('DeepSeek reasoning streaming', () => {
     yield { choices: [] }
   }
   const fake = () => {
-    const create = vi.fn(async (params: { stream?: boolean }) =>
-      params.stream ? chunks() : { choices: [{ message: { content: 'plain' } }] }
-    )
+    const create = vi.fn(async (_params: Record<string, any>) => chunks())
     return { client: { chat: { completions: { create } } } as unknown as OpenAI, create }
   }
 
-  it('streams with thinking on, forwarding reasoning and assembling the same reply', async () => {
+  it('always streams, forwarding reasoning and text and assembling the same reply', async () => {
     const { client, create } = fake()
-    const deltas: string[] = []
+    const reasoning: string[] = []
+    const text: string[] = []
     const reply = await new OpenAIChatModel('deepseek', 'deepseek-flash', client, true).complete({
       system: 's',
       messages: [{ role: 'user', text: 'q' }],
-      onReasoning: (d) => deltas.push(d)
+      onReasoning: (d) => reasoning.push(d),
+      onText: (d) => text.push(d)
     })
     expect(create.mock.calls[0][0].stream).toBe(true)
-    expect(deltas).toEqual(['Need the ', 'quote and news.'])
+    expect(reasoning).toEqual(['Need the ', 'quote and news.'])
+    expect(text).toEqual(['Checking', '.'])
     expect(reply).toEqual({
       role: 'assistant',
       text: 'Checking.',
@@ -235,20 +246,14 @@ describe('DeepSeek reasoning streaming', () => {
     })
   })
 
-  it("doesn't stream with thinking off or nobody listening", async () => {
-    for (const [thinking, onReasoning] of [
-      [false, () => undefined],
-      [true, undefined]
-    ] as const) {
-      const { client, create } = fake()
-      const reply = await new OpenAIChatModel('deepseek', 'deepseek-flash', client, thinking).complete({
-        system: 's',
-        messages: [{ role: 'user', text: 'q' }],
-        onReasoning
-      })
-      expect(create.mock.calls[0][0].stream).toBeUndefined()
-      expect(reply.text).toBe('plain')
-    }
+  it('streams with thinking off and nobody listening, too', async () => {
+    const { client, create } = fake()
+    const reply = await new OpenAIChatModel('deepseek', 'deepseek-flash', client, false).complete({
+      system: 's',
+      messages: [{ role: 'user', text: 'q' }]
+    })
+    expect(create.mock.calls[0][0].stream).toBe(true)
+    expect(reply.text).toBe('Checking.')
   })
 })
 

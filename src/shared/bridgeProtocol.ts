@@ -57,6 +57,14 @@ export interface ReasoningEvent extends BridgeEventBase {
   delta: string
 }
 
+/** A piece of the chat agent's answer as it streams in; the final result
+ * carries the whole text. A model call that goes on to call tools may stream
+ * some text first, so a new tool_call or reasoning step closes it off. */
+export interface TextEvent extends BridgeEventBase {
+  type: 'text'
+  delta: string
+}
+
 /** `data` per command: ask -> AgentResult, analyze -> AnalysisResult,
  * quote -> QuoteResult, considerations_* -> {considerations: string[]},
  * status and set_thinking -> ChatStatus, reset -> {},
@@ -86,6 +94,7 @@ export type BridgeEvent =
   | SpecialistStartEvent
   | SpecialistToolCallEvent
   | ReasoningEvent
+  | TextEvent
   | ResultEvent
   | ErrorEvent
   | BackendExitEvent

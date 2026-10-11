@@ -186,6 +186,17 @@ describe('ReasoningPrinter', () => {
     return { r: new ReasoningPrinter((t) => (out += t)), text: () => plain(out) }
   }
 
+  it('prints answer text as it arrives, on its own line after reasoning', () => {
+    const { r, text } = printer()
+    r.step()
+    r.delta('Hmm.')
+    r.text('AAPL is ')
+    r.text('up.')
+    r.end()
+    expect(text()).toBe('  thinking… Hmm.\nAAPL is up.\n')
+    expect(r.streamedAnswer).toBe(true)
+  })
+
   it("streams the chat agent's reasoning under a label, and closes it before other output", () => {
     const { r, text } = printer()
     r.step()

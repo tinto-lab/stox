@@ -5,9 +5,9 @@ import { inspect } from 'node:util'
 import { askAgent, recordAnalysis } from '../core/agent'
 import { runStockAnalysis } from '../core/analysis'
 import { configDir } from '../core/config'
-import { considerationsPath, loadConsiderations } from '../core/considerations'
 import { Conversation, type Titler, conversationsDir, listConversations, modelTitler } from '../core/conversations'
 import {
+  type ChatModel,
   buildLLM,
   currentProviderName,
   describeCurrent,
@@ -16,7 +16,8 @@ import {
   thinkingSetting,
   thinkingSupported
 } from '../core/llm'
-import { fetchQuotes, hasEodhdKey } from '../core/marketData'
+import { hasEodhdKey } from '../core/marketData'
+import { type Services, defaultServices } from '../core/services'
 import { normalize } from '../shared/symbols'
 import { ReasoningPrinter } from './reasoning'
 import { bold, dim, panel, showAnalysis, showQuotes, showResultData, style } from './render'
@@ -146,10 +147,16 @@ export class Shell {
   // Saves still being written (a new conversation's first waits on its title).
   private saving: Promise<unknown> = Promise.resolve()
   private readonly titler: Titler
+  private readonly services: Services
+  private readonly buildModel: () => ChatModel
 
-  /** `titler` names each new conversation; tests pass a stand-in for the model. */
-  constructor(options: { titler?: Titler } = {}) {
+  /** `titler` names each new conversation, `services` is the data and
+   * storage the agents use, `buildModel` makes the model for each question;
+   * tests pass stand-ins. */
+  constructor(options: { titler?: Titler; services?: Services; buildModel?: () => ChatModel } = {}) {
     this.titler = options.titler ?? modelTitler
+    this.services = options.services ?? defaultServices
+    this.buildModel = options.buildModel ?? buildLLM
   }
 
   /** Waits for saves still in progress, e.g. before exiting. */
@@ -286,23 +293,23 @@ export class Shell {
   }
 
   private showConsiderations(): void {
-    const items = loadConsiderations()
+    const items = this.services.considerations.list()
     if (!items.length) {
       print(
         dim(
-          `no standing considerations yet -- tell the agent to always factor something in, or edit ${considerationsPath()} directly.`
+          `no standing considerations yet -- tell the agent to always factor something in, or edit ${this.services.considerations.location} directly.`
         )
       )
       return
     }
-    print(dim(`standing considerations (${considerationsPath()}):`))
+    print(dim(`standing considerations (${this.services.considerations.location}):`))
     for (const item of items) print(`  - ${item}`)
   }
 
   private async handlePrice(tickers: string[]): Promise<void> {
     print(dim(`→ quote · ${tickers.map(normalize).join(', ')}`))
     try {
-      const { quotes, missing } = await fetchQuotes(tickers)
+      const { quotes, missing } = await this.services.market.quotes(tickers)
       for (const code of missing) print(`${style('red', `✗ ${code}:`)} no data (unknown symbol?)`)
       if (quotes.length) print(showQuotes(quotes))
     } catch (e) {
@@ -317,20 +324,21 @@ export class Shell {
     const conversation = this.conversation
     const result = await this.cancellable(
       (signal) =>
-        askAgent(buildLLM(), text, conversation.history, {
+        askAgent(this.buildModel(), text, conversation.history, {
         signal,
         onToolCall: (name, args) => out.line(toolCallLine(name, args)),
         onReasoningStep: () => out.step(),
         onReasoning: (delta) => out.delta(delta),
+        onText: (delta) => out.text(delta),
         onAnalysisAgentStart: analysis.onAgentStart,
         onAnalysisToolCall: analysis.onToolCall,
         onAnalysisReasoningStep: analysis.onReasoningStep,
         onAnalysisReasoning: analysis.onReasoning
-      }),
+      }, this.services),
       out
     )
     if (!result) return
-    if (result.text) print(result.text)
+    if (result.text && !out.streamedAnswer) print(result.text)
     print()
     const data = showResultData(result)
     if (data) print(data)
@@ -351,7 +359,7 @@ export class Shell {
     )
     const out = new ReasoningPrinter()
     const result = await this.cancellable(
-      (signal) => runStockAnalysis(buildLLM(), ticker, { signal, ...analysisProgress(out) }),
+      (signal) => runStockAnalysis(this.buildModel(), ticker, { signal, ...analysisProgress(out) }, this.services),
       out
     )
     if (!result) return

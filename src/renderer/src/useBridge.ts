@@ -46,6 +46,8 @@ export type TranscriptItem =
       /** Set once that model call has moved on (a tool call, the next step, the result). */
       endedAt: number | null
     }
+  /** The answer as it streams in; replaced by the assistant_result when the request ends. */
+  | { kind: 'streaming_text'; id: string; text: string }
   | { kind: 'error'; id: string; message: string }
   /** A divider, e.g. marking where a resumed conversation picks up. */
   | { kind: 'notice'; id: string; text: string }
@@ -85,6 +87,20 @@ function addReasoning(items: TranscriptItem[], id: string, agent: string | null,
     ...endReasoning(items, id, agent),
     { kind: 'reasoning', id, agent, step, text: delta, startedAt: Date.now(), lastAt: Date.now(), endedAt: null }
   ]
+}
+
+/** Drops request `id`'s streamed text: a model call that went on to call
+ * tools, or the result that carries the whole answer. */
+function dropStreamedText(items: TranscriptItem[], id: string): TranscriptItem[] {
+  return items.some((item) => item.kind === 'streaming_text' && item.id === id)
+    ? items.filter((item) => !(item.kind === 'streaming_text' && item.id === id))
+    : items
+}
+
+function addText(items: TranscriptItem[], id: string, delta: string): TranscriptItem[] {
+  const last = items.at(-1)
+  if (last?.kind === 'streaming_text' && last.id === id) return [...items.slice(0, -1), { ...last, text: last.text + delta }]
+  return [...items, { kind: 'streaming_text', id, text: delta }]
 }
 
 type PendingKind = 'ask' | 'quote' | 'analyze' | 'reset' | 'resume'
@@ -147,6 +163,10 @@ export function useBridge(enabled: boolean) {
       }
 
       const id = event.id
+      if (event.type === 'text') {
+        setTranscript((prev) => addText(prev, id, event.delta))
+        return
+      }
       if (event.type === 'reasoning') {
         setTranscript((prev) => addReasoning(prev, id, event.agent, event.step, event.delta))
         return
@@ -154,7 +174,7 @@ export function useBridge(enabled: boolean) {
       // Anything else from a request means the model call that was thinking has moved on.
       if (event.type === 'tool_call') {
         setTranscript((prev) => [
-          ...endReasoning(prev, id, null),
+          ...endReasoning(dropStreamedText(prev, id), id, null),
           { kind: 'tool_call', id, name: event.name, args: event.args }
         ])
         return
@@ -171,7 +191,7 @@ export function useBridge(enabled: boolean) {
         return
       }
 
-      setTranscript((prev) => endReasoning(prev, id))
+      setTranscript((prev) => endReasoning(dropStreamedText(prev, id), id))
       const requestKind = pending.current.get(event.id)
       pending.current.delete(event.id)
       if (requestKind) setIsBusy(false)
